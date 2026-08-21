@@ -150,11 +150,15 @@ def _has_hot_signal(text: str) -> bool:
             continue
         if keyword not in token_set:
             continue
-        # Single-word keyword found — check that the preceding token isn't a negation
-        idx = tokens.index(keyword)
-        if idx > 0 and tokens[idx - 1] in NEGATIONS:
-            continue
-        return True
+        # Single-word keyword found — check every occurrence, not just the
+        # first. "no budget last year, but budget is approved now" has one
+        # negated and one clean occurrence, and the clean one counts.
+        for idx, token in enumerate(tokens):
+            if token != keyword:
+                continue
+            if idx > 0 and tokens[idx - 1] in NEGATIONS:
+                continue
+            return True
     return False
 
 
