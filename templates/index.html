@@ -407,8 +407,13 @@
         <label>Message</label>
         <textarea name="message" required placeholder="What is the lead asking for?"></textarea>
       </div>
+      {# Honeypot: invisible to humans, bots like filling in URL fields. #}
+      <div style="position:absolute; left:-9999px;" aria-hidden="true">
+        <label for="website">Website (please leave empty)</label>
+        <input type="text" name="website" id="website" tabindex="-1" autocomplete="off" />
+      </div>
       <div class="submit-row">
-        <span class="form-hint">POST /leads · form-data</span>
+        <span class="form-hint">POST /demo-lead · rate limited, 5/min</span>
         <button type="submit" class="primary">Classify &amp; add</button>
       </div>
     </form>
@@ -468,8 +473,10 @@ async function submitLead(e) {
   btn.textContent = 'Classifying...';
   try {
     const data = new FormData(form);
-    const res = await fetch('/leads', { method: 'POST', body: data });
-    if (!res.ok) {
+    const res = await fetch('/demo-lead', { method: 'POST', body: data });
+    if (res.status === 429) {
+      alert('Too many submissions from this address. Please wait a minute.');
+    } else if (!res.ok) {
       alert('Error: ' + res.status);
     } else {
       window.location.reload();
@@ -482,19 +489,34 @@ async function submitLead(e) {
   }
 }
 
+// Changing and deleting leads requires the shared secret, which is
+// deliberately not embedded in this public page. Without it the API answers
+// 401 and we say so instead of silently reloading an unchanged board.
+function explainWriteAccess(res) {
+  if (res.status === 401 || res.status === 503) {
+    alert('Read-only demo: changing or deleting leads needs the X-Api-Token header.');
+    return false;
+  }
+  if (!res.ok) {
+    alert('Error: ' + res.status);
+    return false;
+  }
+  return true;
+}
+
 async function markStatus(id, status) {
-  await fetch(`/leads/${id}/status`, {
+  const res = await fetch(`/leads/${id}/status`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status }),
   });
-  window.location.reload();
+  if (explainWriteAccess(res)) window.location.reload();
 }
 
 async function deleteLead(id) {
   if (!confirm('Delete this lead?')) return;
-  await fetch(`/leads/${id}`, { method: 'DELETE' });
-  window.location.reload();
+  const res = await fetch(`/leads/${id}`, { method: 'DELETE' });
+  if (explainWriteAccess(res)) window.location.reload();
 }
 </script>
 

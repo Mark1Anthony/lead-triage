@@ -10,3 +10,7 @@ services:
         value: 3.11.0
       - key: LEAD_TRIAGE_MODE
         value: demo
+      # Shared secret for the write endpoints. Set in the Render dashboard,
+      # never in this file.
+      - key: LEAD_TRIAGE_TOKEN
+        sync: false

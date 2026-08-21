@@ -18,11 +18,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
+from security import client_ip, demo_lead_limiter, require_token
 from triage import LeadInput, classify_lead, current_mode
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -155,14 +156,7 @@ def index(request: Request):
     )
 
 
-@app.post("/leads")
-async def create_lead(
-    name: str = Form(...),
-    company: str = Form(...),
-    email: str = Form(...),
-    source: str = Form("website"),
-    message: str = Form(...),
-):
+def lead_from_form(name: str, company: str, email: str, source: str, message: str) -> LeadInput:
     lead = LeadInput(
         name=name.strip(),
         company=company.strip(),
@@ -172,7 +166,11 @@ async def create_lead(
     )
     if not lead.name or not lead.company or not lead.message:
         raise HTTPException(status_code=400, detail="name, company and message are required")
+    return lead
 
+
+def store_lead(lead: LeadInput):
+    """Classify a lead and persist it. Shared by /leads, /webhook and /demo-lead."""
     result = classify_lead(lead)
 
     conn = db()
@@ -192,6 +190,56 @@ async def create_lead(
     conn.commit()
     conn.close()
 
+    return new_id, result
+
+
+@app.post("/leads", dependencies=[Depends(require_token)])
+async def create_lead(
+    name: str = Form(...),
+    company: str = Form(...),
+    email: str = Form(...),
+    source: str = Form("website"),
+    message: str = Form(...),
+):
+    lead = lead_from_form(name, company, email, source, message)
+    new_id, result = store_lead(lead)
+
+    return {
+        "id": new_id,
+        "classification": asdict(result),
+    }
+
+
+@app.post("/demo-lead")
+async def create_demo_lead(
+    request: Request,
+    name: str = Form(...),
+    company: str = Form(...),
+    email: str = Form(""),
+    source: str = Form("website"),
+    message: str = Form(...),
+    website: str = Form(""),
+):
+    """Token-free intake for the public form on /.
+
+    Can only create, never change or delete. Protected by a honeypot field and
+    an IP rate limit instead of a token, so the demo stays usable without
+    handing out write access to the whole database.
+    """
+    # Honeypot: invisible to humans, bots like filling in URL fields. Answer as
+    # if it worked - telling the bot would only make it rename the field.
+    if website:
+        return {"ok": True}
+
+    if not await demo_lead_limiter.allow(client_ip(request)):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="rate limit exceeded, try again in a minute",
+        )
+
+    lead = lead_from_form(name, company, email, source, message)
+    new_id, result = store_lead(lead)
+
     return {
         "id": new_id,
         "classification": asdict(result),
@@ -207,7 +255,7 @@ class WebhookLead(BaseModel):
     message: str
 
 
-@app.post("/webhook")
+@app.post("/webhook", dependencies=[Depends(require_token)])
 def webhook(lead: WebhookLead):
     result = classify_lead(LeadInput(**lead.model_dump()))
     conn = db()
@@ -228,7 +276,7 @@ def webhook(lead: WebhookLead):
     return {"ok": True, "classification": asdict(result)}
 
 
-@app.post("/leads/{lead_id}/status")
+@app.post("/leads/{lead_id}/status", dependencies=[Depends(require_token)])
 async def update_status(lead_id: int, request: Request):
     body = await request.json()
     status = body.get("status", "new")
@@ -241,7 +289,7 @@ async def update_status(lead_id: int, request: Request):
     return {"ok": True}
 
 
-@app.delete("/leads/{lead_id}")
+@app.delete("/leads/{lead_id}", dependencies=[Depends(require_token)])
 def delete_lead(lead_id: int):
     conn = db()
     conn.execute("DELETE FROM leads WHERE id = ?", (lead_id,))
@@ -250,7 +298,7 @@ def delete_lead(lead_id: int):
     return {"ok": True}
 
 
-@app.get("/api/leads")
+@app.get("/api/leads", dependencies=[Depends(require_token)])
 def list_leads():
     conn = db()
     rows = conn.execute(

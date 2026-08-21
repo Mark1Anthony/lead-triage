@@ -64,21 +64,52 @@ The badge in the top right of the dashboard shows the current mode.
 
 ## Routes
 
-| Method | Path                       | Purpose                                    |
-|--------|----------------------------|--------------------------------------------|
-| GET    | `/`                        | Dashboard (kanban + form)                  |
-| POST   | `/leads`                   | Create lead from form data                 |
-| POST   | `/webhook`                 | Create lead from JSON payload              |
-| POST   | `/leads/{id}/status`       | Mark as new / contacted / won / lost       |
-| DELETE | `/leads/{id}`              | Delete a lead                              |
-| GET    | `/api/leads`               | JSON list of all leads                     |
-| GET    | `/health`                  | Health check + current mode                |
+| Method | Path                       | Purpose                                    | Auth        |
+|--------|----------------------------|--------------------------------------------|-------------|
+| GET    | `/`                        | Dashboard (kanban + form)                  | public      |
+| GET    | `/health`                  | Health check + current mode                | public      |
+| POST   | `/demo-lead`               | Create lead from the public form           | rate limited |
+| POST   | `/leads`                   | Create lead from form data                 | token       |
+| POST   | `/webhook`                 | Create lead from JSON payload              | token       |
+| POST   | `/leads/{id}/status`       | Mark as new / contacted / won / lost       | token       |
+| DELETE | `/leads/{id}`              | Delete a lead                              | token       |
+| GET    | `/api/leads`               | JSON list of all leads                     | token       |
+
+## Authentication
+
+The app is deployed publicly, so everything that writes to the database — and
+`/api/leads`, which returns full records including email addresses — requires a
+shared secret in the `X-Api-Token` header. Set it via `LEAD_TRIAGE_TOKEN`; with
+no token configured the server fails closed and answers `503`.
+
+```bash
+curl -X POST http://localhost:8000/leads \
+  -H "X-Api-Token: $LEAD_TRIAGE_TOKEN" \
+  -F "name=Sarah Lang" \
+  -F "company=Nord Capital" \
+  -F "email=sarah@nordcapital.de" \
+  -F "message=Need a CRM live by Q2, budget approved."
+```
+
+Without a valid token:
+
+```bash
+curl -i -X DELETE http://localhost:8000/leads/1
+# HTTP/1.1 401 Unauthorized
+# {"detail":"invalid or missing X-Api-Token"}
+```
+
+The dashboard form does **not** carry the token — it posts to `/demo-lead`,
+which can only create leads, never change or delete them. That endpoint is
+limited to 5 submissions per IP per minute and carries a honeypot field.
+This keeps the public demo usable without handing out write access.
 
 ### Webhook example
 
 ```bash
 curl -X POST http://localhost:8000/webhook \
   -H "Content-Type: application/json" \
+  -H "X-Api-Token: $LEAD_TRIAGE_TOKEN" \
   -d '{
     "name": "Sarah Lang",
     "company": "Nord Capital",
