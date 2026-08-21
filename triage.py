@@ -21,7 +21,6 @@ import random
 import re
 from dataclasses import dataclass
 
-
 # ─── Public types ────────────────────────────────────────────────
 
 @dataclass
@@ -113,7 +112,10 @@ WARM_KEYWORDS = [
     "interested", "exploring", "evaluating", "comparing", "pricing",
     "demo", "trial", "pilot", "roadmap",
 ]
-CATEGORIES = ["SaaS", "Agency", "E-commerce", "FinTech", "Health", "Manufacturing", "Media", "Retail", "Consulting"]
+CATEGORIES = [
+    "SaaS", "Agency", "E-commerce", "FinTech", "Health",
+    "Manufacturing", "Media", "Retail", "Consulting",
+]
 
 NEXT_ACTIONS = {
     "hot":  "Call within 24h and send a calendar link.",

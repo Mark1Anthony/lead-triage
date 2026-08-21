@@ -18,7 +18,6 @@ from collections import defaultdict, deque
 
 from fastapi import Header, HTTPException, Request, status
 
-
 # ─── Token guard ─────────────────────────────────────────────────
 
 def _configured_token() -> str | None:

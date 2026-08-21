@@ -11,16 +11,15 @@ Run locally:
 
 from __future__ import annotations
 
-import os
 import sqlite3
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import AsyncIterator, Iterator, Optional
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
@@ -93,14 +92,20 @@ def _insert_examples(conn: sqlite3.Connection) -> None:
             company="Nord Capital",
             email="sarah@nordcapital.de",
             source="website",
-            message="We need a CRM integration live before end of Q2. Budget is approved. Can we schedule a call this week?",
+            message=(
+                "We need a CRM integration live before end of Q2. Budget is approved. "
+                "Can we schedule a call this week?"
+            ),
         ),
         LeadInput(
             name="Tom Becker",
             company="Becker & Partner",
             email="tom@beckerpartner.de",
             source="linkedin",
-            message="Interested in your lead automation work. We're comparing a few providers — can we see a demo?",
+            message=(
+                "Interested in your lead automation work. We're comparing a few "
+                "providers — can we see a demo?"
+            ),
         ),
         LeadInput(
             name="Maria Weiß",
@@ -114,14 +119,20 @@ def _insert_examples(conn: sqlite3.Connection) -> None:
             company="Bitfarm GmbH",
             email="jonas@bitfarm.io",
             source="website",
-            message="Urgent: our current CRM goes offline next week. Need replacement with working webhooks ASAP.",
+            message=(
+                "Urgent: our current CRM goes offline next week. Need replacement "
+                "with working webhooks ASAP."
+            ),
         ),
         LeadInput(
             name="Petra Kurz",
             company="Kurz Retail",
             email="petra@kurzretail.de",
             source="event",
-            message="Met at the trade fair. Exploring tools to automate customer follow-ups. No specific timeline.",
+            message=(
+                "Met at the trade fair. Exploring tools to automate customer "
+                "follow-ups. No specific timeline."
+            ),
         ),
     ]
 

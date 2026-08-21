@@ -1,0 +1,14 @@
+# Nur für Werkzeuge - das Projekt wird nicht als Paket installiert.
+
+[tool.ruff]
+line-length = 100
+exclude = [".venv", "data"]
+
+[tool.ruff.lint]
+# E/W: pycodestyle, F: pyflakes, I: Import-Sortierung, UP: veraltete Idiome,
+# B: typische Fehlerquellen (bugbear).
+select = ["E", "W", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests dürfen lange Zeilen haben, wenn ein Beispieltext das erfordert.
+"tests/*" = ["E501"]
