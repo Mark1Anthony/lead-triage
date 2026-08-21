@@ -1,20 +1,27 @@
 # Lead Triage
 
-A small CRM-style lead intake tool. Leads come in via form or webhook, a GPT model
-classifies them into **hot / warm / cold**, picks an industry category, suggests the
-next action, and the dashboard shows everything as a kanban board.
+A small CRM-style lead intake tool. Leads come in via form or webhook, get classified
+into **hot / warm / cold** with an industry category and a suggested next action, and
+the dashboard shows everything as a kanban board.
 
-Built with FastAPI, SQLite and the OpenAI API. Ships with a deterministic **demo mode**
-so it runs with zero config and no API key — what the public demo uses.
+Classification runs one of two ways: with `OPENAI_API_KEY` set, a GPT model does it.
+Without a key the app falls back to a **deterministic keyword classifier** — no API
+calls, no cost, no surprises. **The public demo runs in that deterministic mode**, so
+what you see there is keyword matching, not a model.
 
-![Screenshot](docs/screenshot.svg)
+Built with FastAPI and SQLite.
+
+![Schematic view of the dashboard](docs/screenshot.svg)
+
+*The image above is a drawn schematic, not a real screenshot.*
 
 ## Live demo
 
 **→ https://lead-triage.onrender.com/**
 
-The hosted version runs in demo mode (no real API calls). Classification is done by a
-deterministic local algorithm so the UI always works and nothing costs anything.
+Runs in demo mode: classification is done by the local keyword algorithm, so the UI
+always works and nothing costs anything. Reading is open to everyone; creating,
+changing and deleting leads requires a token — see [Authentication](#authentication).
 
 ## Features
 
@@ -137,13 +144,21 @@ Demo mode is the public-safe default so the hosted demo always works.
 lead-triage/
 ├── README.md
 ├── LICENSE
-├── requirements.txt
-├── app.py              # FastAPI app + routes
-├── triage.py           # Classifier (live + demo)
+├── requirements.txt        # Runtime dependencies
+├── requirements-dev.txt    # + pytest and httpx
+├── .env.example
+├── pytest.ini
+├── render.yaml             # Render deployment
+├── app.py                  # FastAPI app + routes
+├── triage.py               # Classifier (live + demo)
+├── security.py             # Token guard + IP rate limiter
 ├── templates/
-│   └── index.html      # Dashboard UI
+│   └── index.html          # Dashboard UI
+├── tests/
+│   ├── test_triage.py      # Classifier logic
+│   └── test_api.py         # Endpoint access rules
 └── docs/
-    └── screenshot.svg
+    └── screenshot.svg      # Drawn schematic, not a capture
 ```
 
 ## Why I built this
