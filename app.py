@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import AsyncIterator, Iterator, Optional
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -29,48 +30,63 @@ from triage import LeadInput, classify_lead, current_mode
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "data" / "leads.db"
 
-app = FastAPI(title="Lead Triage")
-templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-
 
 # ─── Database ────────────────────────────────────────────────────
 
-def db() -> sqlite3.Connection:
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS leads (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    received_at  TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    company      TEXT NOT NULL,
+    email        TEXT NOT NULL,
+    source       TEXT NOT NULL,
+    message      TEXT NOT NULL,
+    priority     TEXT NOT NULL,
+    category     TEXT NOT NULL,
+    next_action  TEXT NOT NULL,
+    summary      TEXT NOT NULL,
+    reasoning    TEXT NOT NULL,
+    mode         TEXT NOT NULL,
+    status       TEXT DEFAULT 'new'
+);
+"""
+
+
+def init_db() -> None:
+    """Create the schema. Runs once at startup, not on every request."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH))
+    try:
+        conn.executescript(SCHEMA)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@contextmanager
+def db() -> Iterator[sqlite3.Connection]:
+    """Hand out a connection and always close it, exception or not."""
+    conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS leads (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
-            received_at  TEXT NOT NULL,
-            name         TEXT NOT NULL,
-            company      TEXT NOT NULL,
-            email        TEXT NOT NULL,
-            source       TEXT NOT NULL,
-            message      TEXT NOT NULL,
-            priority     TEXT NOT NULL,
-            category     TEXT NOT NULL,
-            next_action  TEXT NOT NULL,
-            summary      TEXT NOT NULL,
-            reasoning    TEXT NOT NULL,
-            mode         TEXT NOT NULL,
-            status       TEXT DEFAULT 'new'
-        );
-        """
-    )
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def seed_demo_leads() -> None:
     """Drop a few example leads into an empty database so the dashboard
     isn't blank on a fresh deploy. Only runs when the table is empty."""
-    conn = db()
-    count = conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
-    if count > 0:
-        conn.close()
-        return
+    with db() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
+        if count > 0:
+            return
 
+        _insert_examples(conn)
+
+
+def _insert_examples(conn: sqlite3.Connection) -> None:
     examples = [
         LeadInput(
             name="Sarah Lang",
@@ -124,21 +140,30 @@ def seed_demo_leads() -> None:
             ),
         )
     conn.commit()
-    conn.close()
 
 
-seed_demo_leads()
+# ─── App ─────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Set up the schema and the demo rows once, at startup."""
+    init_db()
+    seed_demo_leads()
+    yield
+
+
+app = FastAPI(title="Lead Triage", lifespan=lifespan)
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
 # ─── Routes ──────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    conn = db()
-    rows = conn.execute(
-        "SELECT * FROM leads ORDER BY id DESC LIMIT 100"
-    ).fetchall()
-    conn.close()
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM leads ORDER BY id DESC LIMIT 100"
+        ).fetchall()
 
     grouped = {"hot": [], "warm": [], "cold": []}
     for r in rows:
@@ -173,22 +198,21 @@ def store_lead(lead: LeadInput):
     """Classify a lead and persist it. Shared by /leads, /webhook and /demo-lead."""
     result = classify_lead(lead)
 
-    conn = db()
-    cur = conn.execute(
-        """INSERT INTO leads
-           (received_at, name, company, email, source, message,
-            priority, category, next_action, summary, reasoning, mode)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            datetime.utcnow().isoformat(),
-            lead.name, lead.company, lead.email, lead.source, lead.message,
-            result.priority, result.category, result.next_action,
-            result.summary, result.reasoning, result.mode,
-        ),
-    )
-    new_id = cur.lastrowid
-    conn.commit()
-    conn.close()
+    with db() as conn:
+        cur = conn.execute(
+            """INSERT INTO leads
+               (received_at, name, company, email, source, message,
+                priority, category, next_action, summary, reasoning, mode)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                datetime.utcnow().isoformat(),
+                lead.name, lead.company, lead.email, lead.source, lead.message,
+                result.priority, result.category, result.next_action,
+                result.summary, result.reasoning, result.mode,
+            ),
+        )
+        new_id = cur.lastrowid
+        conn.commit()
 
     return new_id, result
 
@@ -257,22 +281,7 @@ class WebhookLead(BaseModel):
 
 @app.post("/webhook", dependencies=[Depends(require_token)])
 def webhook(lead: WebhookLead):
-    result = classify_lead(LeadInput(**lead.model_dump()))
-    conn = db()
-    conn.execute(
-        """INSERT INTO leads
-           (received_at, name, company, email, source, message,
-            priority, category, next_action, summary, reasoning, mode)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            datetime.utcnow().isoformat(),
-            lead.name, lead.company, lead.email, lead.source, lead.message,
-            result.priority, result.category, result.next_action,
-            result.summary, result.reasoning, result.mode,
-        ),
-    )
-    conn.commit()
-    conn.close()
+    _, result = store_lead(LeadInput(**lead.model_dump()))
     return {"ok": True, "classification": asdict(result)}
 
 
@@ -282,29 +291,26 @@ async def update_status(lead_id: int, request: Request):
     status = body.get("status", "new")
     if status not in {"new", "contacted", "won", "lost"}:
         raise HTTPException(status_code=400, detail="invalid status")
-    conn = db()
-    conn.execute("UPDATE leads SET status = ? WHERE id = ?", (status, lead_id))
-    conn.commit()
-    conn.close()
+    with db() as conn:
+        conn.execute("UPDATE leads SET status = ? WHERE id = ?", (status, lead_id))
+        conn.commit()
     return {"ok": True}
 
 
 @app.delete("/leads/{lead_id}", dependencies=[Depends(require_token)])
 def delete_lead(lead_id: int):
-    conn = db()
-    conn.execute("DELETE FROM leads WHERE id = ?", (lead_id,))
-    conn.commit()
-    conn.close()
+    with db() as conn:
+        conn.execute("DELETE FROM leads WHERE id = ?", (lead_id,))
+        conn.commit()
     return {"ok": True}
 
 
 @app.get("/api/leads", dependencies=[Depends(require_token)])
 def list_leads():
-    conn = db()
-    rows = conn.execute(
-        "SELECT * FROM leads ORDER BY id DESC LIMIT 100"
-    ).fetchall()
-    conn.close()
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM leads ORDER BY id DESC LIMIT 100"
+        ).fetchall()
     return {"leads": [dict(r) for r in rows]}
 
 
