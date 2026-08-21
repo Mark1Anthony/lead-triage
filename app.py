@@ -15,7 +15,7 @@ import os
 import sqlite3
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator, Iterator, Optional
 
@@ -133,7 +133,7 @@ def _insert_examples(conn: sqlite3.Connection) -> None:
                 priority, category, next_action, summary, reasoning, mode)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
                 lead.name, lead.company, lead.email, lead.source, lead.message,
                 result.priority, result.category, result.next_action,
                 result.summary, result.reasoning, result.mode,
@@ -205,7 +205,7 @@ def store_lead(lead: LeadInput):
                 priority, category, next_action, summary, reasoning, mode)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
                 lead.name, lead.company, lead.email, lead.source, lead.message,
                 result.priority, result.category, result.next_action,
                 result.summary, result.reasoning, result.mode,
@@ -316,4 +316,4 @@ def list_leads():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "mode": current_mode(), "time": datetime.utcnow().isoformat()}
+    return {"status": "ok", "mode": current_mode(), "time": datetime.now(timezone.utc).isoformat()}
