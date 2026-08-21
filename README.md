@@ -161,6 +161,21 @@ lead-triage/
     └── screenshot.svg      # Drawn schematic, not a capture
 ```
 
+## Deployment & persistence
+
+The hosted demo runs on Render's free plan. SQLite lives at `data/leads.db` inside the
+container filesystem and **no volume is attached** — so every redeploy and every restart
+wipes the database. The seed rows are recreated on startup; anything submitted through
+the demo form is gone.
+
+That is deliberate for a demo: a public write endpoint plus permanent storage means the
+board fills up with junk, and a free-tier disk would need attaching and paying for. A
+self-resetting demo is the more honest trade here.
+
+In production the two obvious options are a Render Disk mounted at `data/`, or Postgres.
+The SQL involved is plain enough that swapping the driver is a small change — there is
+one table and no ORM.
+
 ## Why I built this
 
 While building a production CRM at TERO, I wrote a lot of lead-routing code by hand — if/else
