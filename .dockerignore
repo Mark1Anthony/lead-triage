@@ -1,0 +1,36 @@
+# The build copies individual files rather than the whole tree, but a small
+# context keeps builds fast and avoids surprises.
+
+.git/
+.github/
+
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+tests/
+pytest.ini
+pyproject.toml
+requirements-dev.txt
+
+# Local database - the container uses its own volume.
+data/
+*.db
+*.db-journal
+
+.env
+.env.*
+!.env.example
+
+docs/
+README.md
+LICENSE
+render.yaml
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+.vscode/
+.idea/
+.DS_Store

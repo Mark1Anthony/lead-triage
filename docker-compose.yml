@@ -1,0 +1,23 @@
+services:
+  app:
+    build: .
+    image: lead-triage
+    ports:
+      - "8000:8000"
+    environment:
+      # demo = deterministic keyword classification, no API calls. Switching to
+      # live is only useful together with OPENAI_API_KEY.
+      LEAD_TRIAGE_MODE: ${LEAD_TRIAGE_MODE:-demo}
+      # Without a token the write endpoints answer 503. Values come from the
+      # .env file next to this one - see .env.example.
+      LEAD_TRIAGE_TOKEN: ${LEAD_TRIAGE_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+    volumes:
+      # The SQLite file lives under /app/data. Without this volume it would be
+      # gone every time the container is recreated.
+      - leads-db:/app/data
+    restart: unless-stopped
+
+volumes:
+  leads-db:

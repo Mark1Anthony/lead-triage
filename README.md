@@ -69,6 +69,32 @@ uvicorn app:app --reload
 
 The badge in the top right of the dashboard shows the current mode.
 
+### Run with Docker
+
+```bash
+docker compose up --build
+```
+
+No configuration needed for a first look: without `LEAD_TRIAGE_TOKEN` the app
+generates one and logs it, and the public form works without a token anyway.
+For a stable token, copy `.env.example` to `.env` and fill it in before
+starting.
+
+Dashboard again on http://127.0.0.1:8000. Compose reads `.env` automatically,
+so the token and any OpenAI settings come from there.
+
+The SQLite file lives in a named volume (`leads-db`) rather than in the
+container, so leads survive a restart:
+
+```bash
+docker compose down          # stop, keep the data
+docker compose down -v       # drop the volume too, database is empty again
+```
+
+The container runs as an unprivileged user and exposes port 8000. Its health
+is polled through the app's own `/health` endpoint, so `docker ps` shows
+`healthy` only once the app really answers.
+
 ## Routes
 
 | Method | Path                       | Purpose                                    | Auth        |
@@ -86,8 +112,13 @@ The badge in the top right of the dashboard shows the current mode.
 
 The app is deployed publicly, so everything that writes to the database — and
 `/api/leads`, which returns full records including email addresses — requires a
-shared secret in the `X-Api-Token` header. Set it via `LEAD_TRIAGE_TOKEN`; with
-no token configured the server fails closed and answers `503`.
+shared secret in the `X-Api-Token` header.
+
+Set it via `LEAD_TRIAGE_TOKEN`. **If you don't, the app still runs**: it
+generates a token at startup and prints it to the log, so a fresh deployment
+works without configuration while the write endpoints stay closed to everyone
+who cannot read that log. A generated token changes on every restart — set the
+variable to keep it stable.
 
 ```bash
 curl -X POST http://localhost:8000/leads \
@@ -145,7 +176,10 @@ lead-triage/
 ├── README.md
 ├── LICENSE
 ├── requirements.txt        # Runtime dependencies
-├── requirements-dev.txt    # + pytest and httpx
+├── requirements-dev.txt    # + pytest, httpx and ruff
+├── Dockerfile
+├── docker-compose.yml
+├── .dockerignore
 ├── .env.example
 ├── pytest.ini
 ├── render.yaml             # Render deployment
