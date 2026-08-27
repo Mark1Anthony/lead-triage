@@ -11,6 +11,7 @@ Run locally:
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -23,8 +24,10 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
-from security import client_ip, demo_lead_limiter, require_token
+from security import client_ip, demo_lead_limiter, effective_token, require_token
 from triage import LeadInput, classify_lead, current_mode
+
+log = logging.getLogger("lead_triage")
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "data" / "leads.db"
@@ -160,6 +163,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Set up the schema and the demo rows once, at startup."""
     init_db()
     seed_demo_leads()
+
+    token, generated = effective_token()
+    if generated:
+        log.warning(
+            "LEAD_TRIAGE_TOKEN is unset - generated one for this process: %s\n"
+            "Write endpoints accept it as the X-Api-Token header. It changes on "
+            "every restart; set LEAD_TRIAGE_TOKEN to keep it stable.",
+            token,
+        )
+    else:
+        log.info("Using LEAD_TRIAGE_TOKEN from the environment.")
+
     yield
 
 

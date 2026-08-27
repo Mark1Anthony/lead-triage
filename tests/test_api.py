@@ -1,5 +1,7 @@
 """API surface: which endpoints are open, which need the shared secret."""
 
+import security
+
 FORM = {
     "name": "Sarah Lang",
     "company": "Nord Capital",
@@ -80,10 +82,40 @@ class TestTokenGuard:
 
 
 class TestUnconfiguredServer:
-    def test_write_endpoints_fail_closed_without_a_configured_token(self, client, monkeypatch):
+    """Without LEAD_TRIAGE_TOKEN the app generates one instead of refusing to
+    serve. The endpoints stay closed to anyone who has not seen the log line."""
+
+    def test_write_endpoints_stay_closed_without_a_configured_token(self, client, monkeypatch):
         monkeypatch.delenv("LEAD_TRIAGE_TOKEN", raising=False)
+        security.reset_generated_token()
+
         response = client.post("/leads", data=FORM, headers={"X-Api-Token": "anything"})
-        assert response.status_code == 503
+        assert response.status_code == 401
+
+    def test_the_generated_token_works(self, client, monkeypatch):
+        monkeypatch.delenv("LEAD_TRIAGE_TOKEN", raising=False)
+        security.reset_generated_token()
+
+        token, generated = security.effective_token()
+        assert generated is True
+        assert len(token) >= 32
+
+        response = client.post("/leads", data=FORM, headers={"X-Api-Token": token})
+        assert response.status_code == 200
+
+    def test_a_configured_token_wins(self, client, monkeypatch):
+        monkeypatch.setenv("LEAD_TRIAGE_TOKEN", "from-the-environment")
+        token, generated = security.effective_token()
+
+        assert (token, generated) == ("from-the-environment", False)
+
+    def test_the_generated_token_is_stable_within_a_process(self, monkeypatch):
+        monkeypatch.delenv("LEAD_TRIAGE_TOKEN", raising=False)
+        security.reset_generated_token()
+
+        first, _ = security.effective_token()
+        second, _ = security.effective_token()
+        assert first == second
 
 
 class TestDemoEndpoint:

@@ -7,12 +7,17 @@ system - this is a demo, and a shared secret is the right size for it.
 
 The public form on / posts to /demo-lead instead, which takes no token but is
 rate limited per IP and carries a honeypot field.
+
+If LEAD_TRIAGE_TOKEN is unset, a token is generated at startup and logged, so a
+fresh deployment works without configuration while staying closed to anyone who
+cannot read the logs.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import secrets
 import time
 from collections import defaultdict, deque
 
@@ -20,24 +25,37 @@ from fastapi import Header, HTTPException, Request, status
 
 # ─── Token guard ─────────────────────────────────────────────────
 
-def _configured_token() -> str | None:
-    """Read on every call rather than at import, so tests can set it."""
-    return os.getenv("LEAD_TRIAGE_TOKEN")
+# Generated once per process when LEAD_TRIAGE_TOKEN is not set. That keeps a
+# fresh deployment working out of the box without leaving the write endpoints
+# open: the value is printed to the log at startup and nowhere else, so only
+# someone who can read the logs can use it. Set the variable to pin it.
+_generated_token: str | None = None
+
+
+def effective_token() -> tuple[str, bool]:
+    """Return the active token and whether it was generated rather than configured."""
+    global _generated_token
+
+    configured = os.getenv("LEAD_TRIAGE_TOKEN")
+    if configured:
+        return configured, False
+
+    if _generated_token is None:
+        _generated_token = secrets.token_urlsafe(32)
+    return _generated_token, True
+
+
+def reset_generated_token() -> None:
+    """Tests only: forget the generated token so the next call makes a new one."""
+    global _generated_token
+    _generated_token = None
 
 
 def require_token(x_api_token: str | None = Header(default=None)) -> None:
-    """FastAPI dependency: reject anything without the shared secret.
+    """FastAPI dependency: reject anything without the shared secret."""
+    token, _ = effective_token()
 
-    Refuses with 503 when the server has no token configured at all - failing
-    closed is the only safe default for a public deployment.
-    """
-    token = _configured_token()
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="server not configured: LEAD_TRIAGE_TOKEN is unset",
-        )
-    if x_api_token != token:
+    if not secrets.compare_digest(x_api_token or "", token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid or missing X-Api-Token",
