@@ -25,7 +25,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger("lead-triage.db")
+# Child of the app logger, so it inherits whatever app.py configures.
+log = logging.getLogger("lead_triage.db")
 
 BASE_DIR = Path(__file__).resolve().parent
 SQLITE_PATH = BASE_DIR / "data" / "leads.db"

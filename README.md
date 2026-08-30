@@ -18,15 +18,20 @@ points at one — same code either way, the compose setup below uses Postgres.
 
 ## Live demo
 
-Not currently deployed. `lead-triage.onrender.com` answers, but what runs there is
-a different application that predates this repository — it exposes `/admin` and
-`/api/leads/export/csv`, neither of which exists here. Rather than link to
-something that is not this project, the link is out until the service is
-redeployed from this code.
+**https://lead-triage-31jo.onrender.com**
 
-Running it yourself takes one command — see [Quick start](#quick-start) or
-[Run with Docker](#run-with-docker). In demo mode classification is done by the
-local keyword algorithm, so the UI always works and nothing costs anything.
+Runs in demo mode on Render's free plan, backed by a Postgres instance — the
+dashboard shows five seeded leads, and the form at the bottom of the page
+creates real ones. Classification there is the keyword algorithm, not a model,
+so nothing costs anything and the result is the same on every run.
+
+Two things to expect from the free plan: the service sleeps after a while, so
+the first request can take up to a minute to wake it, and the free database
+expires 30 days after it is created — this one on 29 September 2026. When it
+goes, the demo goes with it until a new one is provisioned.
+
+Anything that writes beyond that public form is closed. Without `X-Api-Token`
+the write endpoints answer 401 — see [Authentication](#authentication).
 
 ## Features
 
@@ -80,7 +85,8 @@ The badge in the top right of the dashboard shows the current mode.
 docker compose up --build
 ```
 
-Two containers: the app and a Postgres 17 database. Dashboard on
+Two containers: the app and a Postgres 18 database — the same major
+version the deployment runs, so local behaviour matches it. Dashboard on
 http://127.0.0.1:8000 once both are up.
 
 No configuration needed for a first look — without `LEAD_TRIAGE_TOKEN` the app
@@ -207,7 +213,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-57 tests, no network and no database setup required — they run against SQLite in
+63 tests, no network and no database setup required — they run against SQLite in
 a temporary directory and force demo mode, so nothing reaches the OpenAI API.
 
 To run the same tests against Postgres instead:
@@ -237,7 +243,7 @@ lead-triage/
 ├── .env.example
 ├── pytest.ini
 ├── render.yaml             # Render deployment (web service + Postgres)
-├── app.py                  # FastAPI app + routes
+├── app.py                  # FastAPI app + routes, logging setup
 ├── db.py                   # SQLite/Postgres layer, schema, connections
 ├── triage.py               # Classifier (live + demo)
 ├── security.py             # Token guard + IP rate limiter
@@ -246,6 +252,7 @@ lead-triage/
 ├── tests/
 │   ├── test_triage.py      # Classifier logic
 │   ├── test_db.py          # Dialect handling, no database needed
+│   ├── test_logging.py     # Startup lines actually reach the log
 │   └── test_api.py         # Endpoint access rules, runs on both backends
 ├── .github/workflows/
 │   └── ci.yml              # Tests on both backends + container smoke test
@@ -270,16 +277,26 @@ table and no ORM, which is why this is a file and not a framework.
 **Compose** sets `DATABASE_URL` to the `db` service and mounts a named volume,
 so a local run keeps its data across restarts.
 
-**Render** (`render.yaml`) provisions a Postgres instance alongside the web
-service and wires the connection string in automatically. This matters more
-than it sounds: Render's free plan gives the web service an ephemeral
-filesystem, so the earlier SQLite setup lost every lead on each redeploy and
-restart. With the database as its own service the data outlives the container.
-Check Render's current pricing page before relying on the free database plan
-long-term — free database instances there are time-limited.
+**Render** (`render.yaml`) is a Blueprint: applying it creates the web service
+and a Postgres instance together and wires the connection string in through
+`fromDatabase`, so no credential is ever typed in by hand or committed here.
 
-The free web plan still sleeps after inactivity, so the first request after a
-quiet spell takes a few seconds to wake it.
+That split is the whole point. Render's free plan gives the web service an
+ephemeral filesystem, so the earlier SQLite setup lost every lead on each
+redeploy and restart — the seed rows came back and everything else was gone.
+With the database as its own service the data outlives the container.
+
+Two limits of the free plan, worth knowing before relying on it:
+
+- the web service sleeps after inactivity, so the first request afterwards can
+  take up to a minute
+- the free database expires 30 days after creation and is then deleted, unless
+  it is moved to a paid plan
+
+The live instance was deployed from a public Git URL rather than a connected
+GitHub account, which keeps Render out of the account's permissions but also
+means pushes do **not** redeploy it. Connect the repository in Render's
+dashboard if you want automatic deploys.
 
 ## Why I built this
 

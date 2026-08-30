@@ -31,7 +31,7 @@ jobs:
         run: |
           docker run -d --name pg \
             -e POSTGRES_USER=leads -e POSTGRES_PASSWORD=leads -e POSTGRES_DB=leads \
-            -p 5432:5432 postgres:17-alpine
+            -p 5432:5432 postgres:18-alpine
           for i in $(seq 1 30); do
             docker exec pg pg_isready -U leads -d leads && break
             sleep 2

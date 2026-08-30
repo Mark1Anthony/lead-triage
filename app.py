@@ -115,9 +115,40 @@ def _insert_examples(conn) -> None:
 
 # ─── App ─────────────────────────────────────────────────────────
 
+def configure_logging() -> None:
+    """Make this app's own log lines visible.
+
+    Uvicorn configures its own loggers and leaves the root logger untouched,
+    and Python's fallback handler only prints WARNING and above. Without this,
+    everything logged here at INFO is silently dropped in production - which is
+    exactly what happened on the first deployment: the warning about the
+    generated token appeared, the line naming the database backend did not.
+
+    Borrowing uvicorn's handler keeps the format identical to the surrounding
+    server output rather than introducing a second one. It normally sits on the
+    "uvicorn" logger, which "uvicorn.error" only inherits from - but under
+    gunicorn's uvicorn worker it is the other way round, so check both. Outside
+    uvicorn (tests, a plain interpreter) there is nothing to borrow, so fall
+    back to the standard setup.
+    """
+    handlers = (
+        logging.getLogger("uvicorn.error").handlers
+        or logging.getLogger("uvicorn").handlers
+    )
+    if handlers:
+        # A copy: assigning the list itself would leave both loggers sharing one
+        # object, so adding a handler to either would silently change the other.
+        log.handlers = list(handlers)
+        log.propagate = False
+    else:
+        logging.basicConfig(level=logging.INFO)
+    log.setLevel(logging.INFO)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Set up the schema and the demo rows once, at startup."""
+    configure_logging()
     db.init()
     log.info("Database backend: %s", db.backend())
     seed_demo_leads()
