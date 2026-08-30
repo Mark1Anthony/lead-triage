@@ -88,6 +88,15 @@ jobs:
             | grep -q '"priority":"hot"' \
             || { echo "demo-lead did not classify as hot"; exit 1; }
 
+      # The volume is the only reason the database outlives the container, and a
+      # wrong mount path fails quietly on some versions - so check the data is
+      # really still there rather than trusting the mount.
+      - name: Leads survive a restart
+        run: |
+          docker compose down
+          docker compose up -d --wait
+          curl -fsS --retry 10 --retry-all-errors --retry-delay 3 http://localhost:8000/             | grep -q "Pipeline"             || { echo "the lead created before the restart is gone"; exit 1; }
+
       - name: Logs on failure
         if: failure()
         run: docker compose logs

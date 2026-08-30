@@ -30,7 +30,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-leads}
       POSTGRES_DB: leads
     volumes:
-      - leads-db:/var/lib/postgresql/data
+      # Mounted at /var/lib/postgresql, not at .../data: from 18 on these images
+      # keep the cluster in a version-specific subdirectory, so a mount on the
+      # old path is ignored and the container refuses to start rather than
+      # quietly writing somewhere else.
+      - leads-db:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U leads -d leads"]
       interval: 5s
