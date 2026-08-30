@@ -1,3 +1,9 @@
+databases:
+  - name: lead-triage-db
+    plan: free
+    databaseName: leads
+    user: leads
+
 services:
   - type: web
     name: lead-triage
@@ -5,9 +11,17 @@ services:
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
+      # Render fills this in from the database above. Its presence is what
+      # switches the app from SQLite to Postgres - without it the free plan's
+      # ephemeral filesystem would lose every lead on each redeploy.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: lead-triage-db
+          property: connectionString
       - key: LEAD_TRIAGE_MODE
         value: demo
       # Shared secret for the write endpoints. Set in the Render dashboard,

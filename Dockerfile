@@ -11,12 +11,13 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py triage.py security.py ./
+COPY app.py db.py triage.py security.py ./
 COPY templates/ ./templates/
 
-# The app writes its SQLite file to BASE_DIR/data/leads.db, so /app/data has to
-# exist and belong to the user before we drop privileges - otherwise the first
-# write fails.
+# With DATABASE_URL unset the app falls back to SQLite at BASE_DIR/data, so
+# /app/data has to exist and belong to the user before we drop privileges -
+# otherwise that first write fails. Under compose Postgres is used instead and
+# the directory stays empty.
 RUN useradd --create-home --uid 1000 app \
     && mkdir -p /app/data \
     && chown -R app:app /app

@@ -7,8 +7,17 @@ on:
     branches: [main]
 
 jobs:
-  quality:
+  # The same suite twice: once against the SQLite fallback, once against a real
+  # Postgres. Both paths ship, so both get tested.
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: sqlite
+          - backend: postgres
+
     steps:
       - uses: actions/checkout@v4
 
@@ -17,6 +26,17 @@ jobs:
           python-version: '3.11'
           cache: pip
 
+      - name: Start Postgres
+        if: matrix.backend == 'postgres'
+        run: |
+          docker run -d --name pg \
+            -e POSTGRES_USER=leads -e POSTGRES_PASSWORD=leads -e POSTGRES_DB=leads \
+            -p 5432:5432 postgres:17-alpine
+          for i in $(seq 1 30); do
+            docker exec pg pg_isready -U leads -d leads && break
+            sleep 2
+          done
+
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
@@ -24,7 +44,54 @@ jobs:
         run: ruff check .
 
       - name: Run tests
+        env:
+          TEST_DATABASE_URL: ${{ matrix.backend == 'postgres' && 'postgresql://leads:leads@localhost:5432/leads' || '' }}
         run: pytest -q
 
       - name: Import check
-        run: python -c "import app, triage, security"
+        run: python -c "import app, db, triage, security"
+
+  # Build the image and prove the container actually serves traffic, rather
+  # than only that the Dockerfile parses.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t lead-triage .
+
+      - name: Start the full stack
+        run: docker compose up -d --wait
+
+      - name: The app answers and reports its backend
+        run: |
+          health=$(curl -fsS --retry 10 --retry-all-errors --retry-delay 3 http://localhost:8000/health)
+          echo "$health"
+          echo "$health" | grep -q '"database":"postgres"' \
+            || { echo "expected the compose stack to use postgres"; exit 1; }
+
+      - name: The dashboard renders and the seed ran
+        run: |
+          curl -fsS http://localhost:8000/ | grep -q "Nord Capital" \
+            || { echo "seed rows missing from the dashboard"; exit 1; }
+
+      - name: Writes are closed without a token
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE http://localhost:8000/leads/1)
+          [ "$code" = "401" ] || { echo "expected 401, got $code"; exit 1; }
+
+      - name: The public form still works
+        run: |
+          curl -fsS -X POST http://localhost:8000/demo-lead \
+            -F name=CI -F company=Pipeline -F 'message=budget approved, urgent' \
+            | grep -q '"priority":"hot"' \
+            || { echo "demo-lead did not classify as hot"; exit 1; }
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

@@ -9,7 +9,8 @@ Without a key the app falls back to a **deterministic keyword classifier** — n
 calls, no cost, no surprises. That is the default, so running this without any
 configuration gives you keyword matching, not a model.
 
-Built with FastAPI and SQLite.
+Built with FastAPI. Storage is SQLite by default and Postgres when `DATABASE_URL`
+points at one — same code either way, the compose setup below uses Postgres.
 
 ![Schematic view of the dashboard](docs/screenshot.svg)
 
@@ -33,7 +34,7 @@ local keyword algorithm, so the UI always works and nothing costs anything.
 - **Webhook intake** — POST JSON to `/webhook` for external systems
 - **GPT classification** — priority, category, summary, next action, reasoning
 - **Kanban dashboard** — hot / warm / cold columns, colour-coded cards
-- **SQLite storage** — no external database needed
+- **SQLite or Postgres** — SQLite by default, Postgres via `DATABASE_URL`
 - **Dual mode** — `live` (OpenAI) or `demo` (mock). Falls back to demo on errors.
 - **Mark as won / lost / delete** — basic lifecycle
 - **5 example leads** — seeded on first run so the board isn't empty
@@ -43,7 +44,7 @@ local keyword algorithm, so the UI always works and nothing costs anything.
 - **Python 3.10+**
 - **FastAPI** + **Uvicorn**
 - **OpenAI SDK** (v1.x, `gpt-4o-mini` by default)
-- **SQLite** (stdlib)
+- **SQLite** (stdlib) or **Postgres** (psycopg 3)
 - **Jinja2** templates
 
 ## Quick start
@@ -79,25 +80,51 @@ The badge in the top right of the dashboard shows the current mode.
 docker compose up --build
 ```
 
-No configuration needed for a first look: without `LEAD_TRIAGE_TOKEN` the app
-generates one and logs it, and the public form works without a token anyway.
-For a stable token, copy `.env.example` to `.env` and fill it in before
-starting.
+Two containers: the app and a Postgres 17 database. Dashboard on
+http://127.0.0.1:8000 once both are up.
 
-Dashboard again on http://127.0.0.1:8000. Compose reads `.env` automatically,
-so the token and any OpenAI settings come from there.
+No configuration needed for a first look — without `LEAD_TRIAGE_TOKEN` the app
+generates one and logs it, and the public form works without a token anyway. For
+a stable token and a real database password, copy `.env.example` to `.env` and
+fill it in before starting; compose reads that file automatically.
 
-The SQLite file lives in a named volume (`leads-db`) rather than in the
-container, so leads survive a restart:
+**Why two containers.** The app talks to Postgres over the compose network at
+the hostname `db` — that is the service name, nothing else configures it.
+Postgres takes a few seconds longer to accept connections than to start its
+container, and the app creates its schema during startup, so the app waits for
+`service_healthy` rather than for the container to exist. The health condition
+is `pg_isready`, which is what the database itself uses to report readiness.
+
+The database lives in a named volume, so leads survive a restart:
 
 ```bash
 docker compose down          # stop, keep the data
 docker compose down -v       # drop the volume too, database is empty again
 ```
 
-The container runs as an unprivileged user and exposes port 8000. Its health
-is polled through the app's own `/health` endpoint, so `docker ps` shows
-`healthy` only once the app really answers.
+Both containers restart unless stopped. The app runs as an unprivileged user,
+and its health is polled through the app's own `/health` endpoint — so
+`docker ps` shows `healthy` only once it really answers. Postgres publishes no
+port to the host; only the app needs to reach it.
+
+To check which backend is live:
+
+```bash
+curl -s localhost:8000/health
+# {"status":"ok","mode":"demo","database":"postgres","time":"..."}
+```
+
+### Without Docker, against Postgres
+
+`DATABASE_URL` is the only switch. Unset, the app uses SQLite at `data/leads.db`:
+
+```bash
+export DATABASE_URL=postgresql://leads:leads@localhost:5432/leads
+uvicorn app:app --reload
+```
+
+The schema is created on startup either way — there is one table, so there are
+no migrations to run.
 
 ## Routes
 
@@ -173,6 +200,29 @@ curl -X POST http://localhost:8000/webhook \
 
 Demo mode is the default, so the app works out of the box and costs nothing.
 
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+57 tests, no network and no database setup required — they run against SQLite in
+a temporary directory and force demo mode, so nothing reaches the OpenAI API.
+
+To run the same tests against Postgres instead:
+
+```bash
+export TEST_DATABASE_URL=postgresql://leads:leads@localhost:5432/leads
+pytest
+```
+
+Every test then talks to Postgres, with the table dropped between tests so each
+one starts clean. CI does both on each push, plus a third job that builds the
+image, brings the compose stack up and checks that the running container serves
+the dashboard, keeps the write endpoints closed and reports `"database":
+"postgres"` on `/health`.
+
 ## Project structure
 
 ```
@@ -181,39 +231,55 @@ lead-triage/
 ├── LICENSE
 ├── requirements.txt        # Runtime dependencies
 ├── requirements-dev.txt    # + pytest, httpx and ruff
-├── Dockerfile
-├── docker-compose.yml
+├── Dockerfile              # App image
+├── docker-compose.yml      # App + Postgres
 ├── .dockerignore
 ├── .env.example
 ├── pytest.ini
-├── render.yaml             # Render deployment
+├── render.yaml             # Render deployment (web service + Postgres)
 ├── app.py                  # FastAPI app + routes
+├── db.py                   # SQLite/Postgres layer, schema, connections
 ├── triage.py               # Classifier (live + demo)
 ├── security.py             # Token guard + IP rate limiter
 ├── templates/
 │   └── index.html          # Dashboard UI
 ├── tests/
 │   ├── test_triage.py      # Classifier logic
-│   └── test_api.py         # Endpoint access rules
+│   ├── test_db.py          # Dialect handling, no database needed
+│   └── test_api.py         # Endpoint access rules, runs on both backends
+├── .github/workflows/
+│   └── ci.yml              # Tests on both backends + container smoke test
 └── docs/
     └── screenshot.svg      # Drawn schematic, not a capture
 ```
 
 ## Deployment & persistence
 
-`render.yaml` targets Render's free plan. There, SQLite lives at `data/leads.db`
-inside the container filesystem with **no volume attached** — so every redeploy and
-every restart wipes the database. The seed rows come back on startup; anything
-submitted through the form is gone.
+Which database is used comes down to one variable:
 
-That is a deliberate trade for a public demo: a write endpoint plus permanent
-storage means the board fills up with junk, and a free-tier disk has to be
-attached and paid for. `docker-compose.yml` does it the other way round and
-mounts a named volume, so a local run keeps its data.
+| `DATABASE_URL`              | Backend  | Where the data lives                    |
+|-----------------------------|----------|-----------------------------------------|
+| unset                       | SQLite   | `data/leads.db` next to the code         |
+| `postgresql://…`            | Postgres | on that server                           |
 
-In production the two obvious options are a Render Disk mounted at `data/`, or Postgres.
-The SQL involved is plain enough that swapping the driver is a small change — there is
-one table and no ORM.
+Nothing else changes — same routes, same tests, same code. `db.py` holds the
+two differences that actually exist between the dialects: the placeholder style
+(`?` vs `%s`) and how an auto-incrementing primary key is declared. There is one
+table and no ORM, which is why this is a file and not a framework.
+
+**Compose** sets `DATABASE_URL` to the `db` service and mounts a named volume,
+so a local run keeps its data across restarts.
+
+**Render** (`render.yaml`) provisions a Postgres instance alongside the web
+service and wires the connection string in automatically. This matters more
+than it sounds: Render's free plan gives the web service an ephemeral
+filesystem, so the earlier SQLite setup lost every lead on each redeploy and
+restart. With the database as its own service the data outlives the container.
+Check Render's current pricing page before relying on the free database plan
+long-term — free database instances there are time-limited.
+
+The free web plan still sleeps after inactivity, so the first request after a
+quiet spell takes a few seconds to wake it.
 
 ## Why I built this
 

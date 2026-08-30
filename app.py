@@ -3,7 +3,8 @@ Lead Triage — FastAPI app.
 
 A small CRM-style intake tool that accepts leads (via form or webhook),
 runs them through the triage classifier (GPT in live mode, deterministic
-mock in demo mode), stores them in SQLite and shows a kanban board.
+mock in demo mode), stores them in SQLite or Postgres (see db.py) and shows
+a kanban board.
 
 Run locally:
     uvicorn app:app --reload
@@ -12,83 +13,38 @@ Run locally:
 from __future__ import annotations
 
 import logging
-import sqlite3
-from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime, timezone
-from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
+import db
 from security import client_ip, demo_lead_limiter, effective_token, require_token
 from triage import LeadInput, classify_lead, current_mode
 
 log = logging.getLogger("lead_triage")
 
-BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "data" / "leads.db"
+BASE_DIR = db.BASE_DIR
 
 
-# ─── Database ────────────────────────────────────────────────────
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS leads (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    received_at  TEXT NOT NULL,
-    name         TEXT NOT NULL,
-    company      TEXT NOT NULL,
-    email        TEXT NOT NULL,
-    source       TEXT NOT NULL,
-    message      TEXT NOT NULL,
-    priority     TEXT NOT NULL,
-    category     TEXT NOT NULL,
-    next_action  TEXT NOT NULL,
-    summary      TEXT NOT NULL,
-    reasoning    TEXT NOT NULL,
-    mode         TEXT NOT NULL,
-    status       TEXT DEFAULT 'new'
-);
-"""
-
-
-def init_db() -> None:
-    """Create the schema. Runs once at startup, not on every request."""
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
-    try:
-        conn.executescript(SCHEMA)
-        conn.commit()
-    finally:
-        conn.close()
-
-
-@contextmanager
-def db() -> Iterator[sqlite3.Connection]:
-    """Hand out a connection and always close it, exception or not."""
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-    finally:
-        conn.close()
-
+# ─── Seed data ───────────────────────────────────────────────────
 
 def seed_demo_leads() -> None:
     """Drop a few example leads into an empty database so the dashboard
     isn't blank on a fresh deploy. Only runs when the table is empty."""
-    with db() as conn:
-        count = conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
-        if count > 0:
+    with db.connect() as conn:
+        if db.one_value(conn, "SELECT COUNT(*) FROM leads") > 0:
             return
 
         _insert_examples(conn)
 
 
-def _insert_examples(conn: sqlite3.Connection) -> None:
+def _insert_examples(conn) -> None:
     examples = [
         LeadInput(
             name="Sarah Lang",
@@ -141,7 +97,8 @@ def _insert_examples(conn: sqlite3.Connection) -> None:
 
     for lead in examples:
         result = classify_lead(lead)
-        conn.execute(
+        db.execute(
+            conn,
             """INSERT INTO leads
                (received_at, name, company, email, source, message,
                 priority, category, next_action, summary, reasoning, mode)
@@ -161,7 +118,8 @@ def _insert_examples(conn: sqlite3.Connection) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Set up the schema and the demo rows once, at startup."""
-    init_db()
+    db.init()
+    log.info("Database backend: %s", db.backend())
     seed_demo_leads()
 
     token, generated = effective_token()
@@ -186,20 +144,18 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    with db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM leads ORDER BY id DESC LIMIT 100"
-        ).fetchall()
+    with db.connect() as conn:
+        rows = db.all_rows(conn, "SELECT * FROM leads ORDER BY id DESC LIMIT 100")
 
     grouped = {"hot": [], "warm": [], "cold": []}
     for r in rows:
-        grouped.setdefault(r["priority"], []).append(dict(r))
+        grouped.setdefault(r["priority"], []).append(r)
 
     return templates.TemplateResponse(
         request=request,
         name="index.html",
         context={
-            "leads": [dict(r) for r in rows],
+            "leads": rows,
             "grouped": grouped,
             "mode": current_mode(),
             "total": len(rows),
@@ -224,8 +180,9 @@ def store_lead(lead: LeadInput):
     """Classify a lead and persist it. Shared by /leads, /webhook and /demo-lead."""
     result = classify_lead(lead)
 
-    with db() as conn:
-        cur = conn.execute(
+    with db.connect() as conn:
+        new_id = db.insert_returning_id(
+            conn,
             """INSERT INTO leads
                (received_at, name, company, email, source, message,
                 priority, category, next_action, summary, reasoning, mode)
@@ -237,7 +194,6 @@ def store_lead(lead: LeadInput):
                 result.summary, result.reasoning, result.mode,
             ),
         )
-        new_id = cur.lastrowid
         conn.commit()
 
     return new_id, result
@@ -317,29 +273,32 @@ async def update_status(lead_id: int, request: Request):
     status = body.get("status", "new")
     if status not in {"new", "contacted", "won", "lost"}:
         raise HTTPException(status_code=400, detail="invalid status")
-    with db() as conn:
-        conn.execute("UPDATE leads SET status = ? WHERE id = ?", (status, lead_id))
+    with db.connect() as conn:
+        db.execute(conn, "UPDATE leads SET status = ? WHERE id = ?", (status, lead_id))
         conn.commit()
     return {"ok": True}
 
 
 @app.delete("/leads/{lead_id}", dependencies=[Depends(require_token)])
 def delete_lead(lead_id: int):
-    with db() as conn:
-        conn.execute("DELETE FROM leads WHERE id = ?", (lead_id,))
+    with db.connect() as conn:
+        db.execute(conn, "DELETE FROM leads WHERE id = ?", (lead_id,))
         conn.commit()
     return {"ok": True}
 
 
 @app.get("/api/leads", dependencies=[Depends(require_token)])
 def list_leads():
-    with db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM leads ORDER BY id DESC LIMIT 100"
-        ).fetchall()
-    return {"leads": [dict(r) for r in rows]}
+    with db.connect() as conn:
+        rows = db.all_rows(conn, "SELECT * FROM leads ORDER BY id DESC LIMIT 100")
+    return {"leads": rows}
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "mode": current_mode(), "time": datetime.now(timezone.utc).isoformat()}
+    return {
+        "status": "ok",
+        "mode": current_mode(),
+        "database": db.backend(),
+        "time": datetime.now(timezone.utc).isoformat(),
+    }

@@ -5,19 +5,41 @@ services:
     ports:
       - "8000:8000"
     environment:
+      # Pointing at the db service switches the app from SQLite to Postgres.
+      # The hostname "db" is the service name below - compose resolves it on
+      # the shared network.
+      DATABASE_URL: postgresql://leads:${POSTGRES_PASSWORD:-leads}@db:5432/leads
       # demo = deterministic keyword classification, no API calls. Switching to
       # live is only useful together with OPENAI_API_KEY.
       LEAD_TRIAGE_MODE: ${LEAD_TRIAGE_MODE:-demo}
-      # Without a token the write endpoints answer 503. Values come from the
-      # .env file next to this one - see .env.example.
+      # Without a token the app generates one and logs it at startup.
       LEAD_TRIAGE_TOKEN: ${LEAD_TRIAGE_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
-    volumes:
-      # The SQLite file lives under /app/data. Without this volume it would be
-      # gone every time the container is recreated.
-      - leads-db:/app/data
+    depends_on:
+      db:
+        # Not just "started": Postgres accepts connections a moment after the
+        # container is up, and the app creates its schema during startup.
+        condition: service_healthy
     restart: unless-stopped
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: leads
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-leads}
+      POSTGRES_DB: leads
+    volumes:
+      - leads-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leads -d leads"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    # No ports published: only the app needs to reach the database. Add
+    # `ports: ["5432:5432"]` if you want to inspect it with psql from the host.
 
 volumes:
   leads-db:
