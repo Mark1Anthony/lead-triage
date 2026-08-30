@@ -6,8 +6,8 @@ the dashboard shows everything as a kanban board.
 
 Classification runs one of two ways: with `OPENAI_API_KEY` set, a GPT model does it.
 Without a key the app falls back to a **deterministic keyword classifier** — no API
-calls, no cost, no surprises. **The public demo runs in that deterministic mode**, so
-what you see there is keyword matching, not a model.
+calls, no cost, no surprises. That is the default, so running this without any
+configuration gives you keyword matching, not a model.
 
 Built with FastAPI and SQLite.
 
@@ -17,11 +17,15 @@ Built with FastAPI and SQLite.
 
 ## Live demo
 
-**→ https://lead-triage.onrender.com/**
+Not currently deployed. `lead-triage.onrender.com` answers, but what runs there is
+a different application that predates this repository — it exposes `/admin` and
+`/api/leads/export/csv`, neither of which exists here. Rather than link to
+something that is not this project, the link is out until the service is
+redeployed from this code.
 
-Runs in demo mode: classification is done by the local keyword algorithm, so the UI
-always works and nothing costs anything. Reading is open to everyone; creating,
-changing and deleting leads requires a token — see [Authentication](#authentication).
+Running it yourself takes one command — see [Quick start](#quick-start) or
+[Run with Docker](#run-with-docker). In demo mode classification is done by the
+local keyword algorithm, so the UI always works and nothing costs anything.
 
 ## Features
 
@@ -110,9 +114,9 @@ is polled through the app's own `/health` endpoint, so `docker ps` shows
 
 ## Authentication
 
-The app is deployed publicly, so everything that writes to the database — and
-`/api/leads`, which returns full records including email addresses — requires a
-shared secret in the `X-Api-Token` header.
+This is built to be deployed publicly, so everything that writes to the database
+— and `/api/leads`, which returns full records including email addresses —
+requires a shared secret in the `X-Api-Token` header.
 
 Set it via `LEAD_TRIAGE_TOKEN`. **If you don't, the app still runs**: it
 generates a token at startup and prints it to the log, so a fresh deployment
@@ -139,8 +143,8 @@ curl -i -X DELETE http://localhost:8000/leads/1
 
 The dashboard form does **not** carry the token — it posts to `/demo-lead`,
 which can only create leads, never change or delete them. That endpoint is
-limited to 5 submissions per IP per minute and carries a honeypot field.
-This keeps the public demo usable without handing out write access.
+limited to 5 submissions per IP per minute and carries a honeypot field, so a
+public deployment stays usable without handing out write access.
 
 ### Webhook example
 
@@ -167,7 +171,7 @@ curl -X POST http://localhost:8000/webhook \
 | Latency       | <1ms                                               | 500–1500ms                           |
 | Fallback      | —                                                  | Falls back to demo on errors         |
 
-Demo mode is the public-safe default so the hosted demo always works.
+Demo mode is the default, so the app works out of the box and costs nothing.
 
 ## Project structure
 
@@ -197,14 +201,15 @@ lead-triage/
 
 ## Deployment & persistence
 
-The hosted demo runs on Render's free plan. SQLite lives at `data/leads.db` inside the
-container filesystem and **no volume is attached** — so every redeploy and every restart
-wipes the database. The seed rows are recreated on startup; anything submitted through
-the demo form is gone.
+`render.yaml` targets Render's free plan. There, SQLite lives at `data/leads.db`
+inside the container filesystem with **no volume attached** — so every redeploy and
+every restart wipes the database. The seed rows come back on startup; anything
+submitted through the form is gone.
 
-That is deliberate for a demo: a public write endpoint plus permanent storage means the
-board fills up with junk, and a free-tier disk would need attaching and paying for. A
-self-resetting demo is the more honest trade here.
+That is a deliberate trade for a public demo: a write endpoint plus permanent
+storage means the board fills up with junk, and a free-tier disk has to be
+attached and paid for. `docker-compose.yml` does it the other way round and
+mounts a named volume, so a local run keeps its data.
 
 In production the two obvious options are a Render Disk mounted at `data/`, or Postgres.
 The SQL involved is plain enough that swapping the driver is a small change — there is
