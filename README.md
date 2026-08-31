@@ -94,6 +94,13 @@ generates one and logs it, and the public form works without a token anyway. For
 a stable token and a real database password, copy `.env.example` to `.env` and
 fill it in before starting; compose reads that file automatically.
 
+The credentials you see in this repository — `leads:leads` in the compose file,
+the CI workflow and the examples below — are placeholders for a database that
+only exists inside the compose network. They are not secrets, and secret
+scanners will occasionally flag them anyway. The two values that are real,
+`LEAD_TRIAGE_TOKEN` and `OPENAI_API_KEY`, appear nowhere in the repository: they
+come from `.env` locally and from the platform's own settings in deployment.
+
 **Why two containers.** The app talks to Postgres over the compose network at
 the hostname `db` — that is the service name, nothing else configures it.
 Postgres takes a few seconds longer to accept connections than to start its

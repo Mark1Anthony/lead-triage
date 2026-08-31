@@ -42,8 +42,11 @@ services:
       retries: 10
       start_period: 10s
     restart: unless-stopped
-    # No ports published: only the app needs to reach the database. Add
-    # `ports: ["5432:5432"]` if you want to inspect it with psql from the host.
+    # No ports published: only the app needs to reach the database, and it
+    # reaches it over the compose network. To inspect it with psql, add
+    # `ports: ["127.0.0.1:5432:5432"]` - with the address, not just the port.
+    # Plain "5432:5432" binds to 0.0.0.0 and would put a database whose password
+    # defaults to "leads" on every interface this machine has.
 
 volumes:
   leads-db:
