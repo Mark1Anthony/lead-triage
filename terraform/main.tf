@@ -89,6 +89,7 @@ resource "aws_dynamodb_table" "leads" {
   }
 
   #checkov:skip=CKV_AWS_119:A customer-managed key costs a dollar a month per key. Encryption is on with an AWS-owned key; the table holds demo leads.
+  #checkov:skip=CKV2_AWS_16:Auto scaling would scale past the free allowance, which is the one thing this table is configured to stay inside. Throttling is the intended behaviour here, not an oversight - a demo that briefly returns errors under a burst is better than one that quietly starts billing.
 }
 
 # ─── Secret ───────────────────────────────────────────────────────
