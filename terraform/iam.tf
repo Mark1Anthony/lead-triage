@@ -66,6 +66,14 @@ resource "aws_iam_policy" "lambda_data" {
       },
       {
         Effect = "Allow"
+        # Tracing is enabled on the function; without these it fails silently
+        # and the traces simply never appear. X-Ray has no resource ARN to
+        # scope to - the call names no target.
+        Action   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
         Action = "kms:Decrypt"
         # A SecureString is encrypted with the account's default SSM key, and
         # reading it without this permission fails at decrypt, not at GetParameter.
