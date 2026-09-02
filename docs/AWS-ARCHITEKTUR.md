@@ -98,18 +98,34 @@ und ein Anfragebearbeiter, der sie löschen könnte, tut es irgendwann.
 
 ## Kosten
 
-| Dienst | Dauerhaft frei | Diese Nutzung |
-|---|---|---|
-| Lambda | 1 Mio. Anfragen, 400.000 GB-Sekunden pro Monat | weit darunter |
-| API Gateway HTTP API | 1 Mio. Anfragen pro Monat (erste 12 Monate) | darunter |
-| DynamoDB | 25 GB Speicher | wenige Kilobyte |
-| CloudWatch Logs | 5 GB Aufnahme pro Monat | darunter, 14 Tage Aufbewahrung |
-| ECR | 500 MB im ersten Jahr | rund 400 MB je Image, zehn behalten |
+Entscheidend ist der Unterschied zwischen **dauerhaft frei** und **erste zwölf
+Monate frei**. Auf einem Konto, das älter als ein Jahr ist, zählt nur die erste
+Spalte.
 
-**Erwartete Rechnung: null bis wenige Cent im Monat.** Der einzige Posten, der
-nach dem ersten Jahr überhaupt etwas kostet, ist der ECR-Speicher, bei rund
-0,10 USD je GB und Monat. Die Lifecycle-Regel behält zehn Images; ohne sie
-würden sie sich unbegrenzt ansammeln.
+| Dienst | Dauerhaft frei | Diese Nutzung | Kosten |
+|---|---|---|---|
+| Lambda | 1 Mio. Anfragen, 400.000 GB-Sekunden pro Monat | weit darunter | 0 |
+| DynamoDB | 25 GB, **25 provisionierte** Lese-/Schreibeinheiten | 5/5, wenige KB | 0 |
+| CloudWatch Logs | 5 GB Aufnahme und Speicher pro Monat | darunter | 0 |
+| SSM Parameter Store | Standardparameter | einer | 0 |
+| X-Ray | 100.000 Traces pro Monat | weit darunter | 0 |
+| API Gateway HTTP API | nur erste 12 Monate | ~1 USD je Mio. Anfragen | Bruchteile eines Cents |
+| ECR | nur erste 12 Monate (500 MB) | ~400 MB je Image, drei behalten | ~0,12 USD |
+
+**Erwartete Rechnung: rund 0,12 USD im Monat**, praktisch vollständig
+ECR-Speicher. Zwei Entscheidungen halten das dort:
+
+DynamoDB läuft **provisioniert**, nicht on-demand. Die dauerhaft freie Stufe
+gilt ausschließlich für provisionierte Kapazität; on-demand hat gar keine und
+rechnet ab der ersten Anfrage ab. Fünf Einheiten je Richtung liegen weit über
+dem Bedarf und weit unter der Freigrenze.
+
+Die Lifecycle-Regel behält **drei** Images statt zehn. Das ist genug, um zweimal
+zurückzurollen, und kostet ein Drittel.
+
+Wer exakt null will, packt die Funktion als ZIP statt als Container-Image —
+dann entfällt ECR ganz. Der Preis dafür ist, dass das vorhandene Dockerfile
+nicht mehr die Grundlage ist und das Paket auf Linux gebaut werden muss.
 
 Ein Budget mit Alarm bei 5 USD liegt trotzdem im Stack. AWS erzwingt keine
 Obergrenze — ein Budget verschickt Mail, es stoppt nichts. Es ist da, weil

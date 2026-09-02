@@ -32,16 +32,19 @@ resource "aws_ecr_lifecycle_policy" "this" {
   repository = aws_ecr_repository.this.name
 
   # Storage is the only part of ECR that is not free after the first year, and
-  # every deployment adds an image. Keeping ten is enough to roll back and
-  # bounded enough not to accumulate.
+  # every deployment adds an image.
   policy = jsonencode({
     rules = [{
       rulePriority = 1
-      description  = "Keep the last 10 images"
+      description  = "Keep the last 3 images"
       selection = {
-        tagStatus   = "any"
-        countType   = "imageCountMoreThan"
-        countNumber = 10
+        tagStatus = "any"
+        countType = "imageCountMoreThan"
+        # ECR storage is the one line here that is not free: the 500 MB
+        # allowance runs out after twelve months, and this image is around
+        # 400 MB. Three is enough to roll back twice and costs about a tenth of
+        # what ten would.
+        countNumber = 3
       }
       action = { type = "expire" }
     }]
@@ -51,9 +54,20 @@ resource "aws_ecr_lifecycle_policy" "this" {
 # ─── Storage ──────────────────────────────────────────────────────
 
 resource "aws_dynamodb_table" "leads" {
-  name         = local.name
-  billing_mode = "PAY_PER_REQUEST" # no capacity to plan, nothing to pay when idle
-  hash_key     = "id"
+  name     = local.name
+  hash_key = "id"
+
+  # Provisioned, not on-demand - and this is the whole reason. DynamoDB's
+  # permanently free allowance is 25 read and 25 write units of *provisioned*
+  # capacity; on-demand has no free tier at all and bills per request from the
+  # first one. Five of each is far above what a demo needs and far below the
+  # allowance, so this table is free rather than nearly free.
+  #
+  # The trade is that a burst throttles instead of scaling. For a dashboard
+  # nobody is hammering, that is the right way round.
+  billing_mode   = "PROVISIONED"
+  read_capacity  = 5
+  write_capacity = 5
 
   attribute {
     name = "id"
