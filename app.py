@@ -3,8 +3,8 @@ Lead Triage — FastAPI app.
 
 A small CRM-style intake tool that accepts leads (via form or webhook),
 runs them through the triage classifier (GPT in live mode, deterministic
-mock in demo mode), stores them in SQLite or Postgres (see db.py) and shows
-a kanban board.
+mock in demo mode), stores them in SQLite, Postgres or DynamoDB (see db.py)
+and shows a kanban board.
 
 Run locally:
     uvicorn app:app --reload
@@ -34,17 +34,38 @@ BASE_DIR = db.BASE_DIR
 
 # ─── Seed data ───────────────────────────────────────────────────
 
+def as_record(lead: LeadInput, result) -> dict:
+    """Flatten an input and its classification into one storable record.
+
+    Both insert paths go through here, so a new field is added in one place
+    rather than in two that drift apart.
+    """
+    return {
+        "received_at": datetime.now(timezone.utc).isoformat(),
+        "name": lead.name,
+        "company": lead.company,
+        "email": lead.email,
+        "source": lead.source,
+        "message": lead.message,
+        "priority": result.priority,
+        "category": result.category,
+        "next_action": result.next_action,
+        "summary": result.summary,
+        "reasoning": result.reasoning,
+        "mode": result.mode,
+    }
+
+
 def seed_demo_leads() -> None:
     """Drop a few example leads into an empty database so the dashboard
     isn't blank on a fresh deploy. Only runs when the table is empty."""
-    with db.connect() as conn:
-        if db.one_value(conn, "SELECT COUNT(*) FROM leads") > 0:
-            return
+    if db.count_leads() > 0:
+        return
 
-        _insert_examples(conn)
+    _insert_examples()
 
 
-def _insert_examples(conn) -> None:
+def _insert_examples() -> None:
     examples = [
         LeadInput(
             name="Sarah Lang",
@@ -96,21 +117,7 @@ def _insert_examples(conn) -> None:
     ]
 
     for lead in examples:
-        result = classify_lead(lead)
-        db.execute(
-            conn,
-            """INSERT INTO leads
-               (received_at, name, company, email, source, message,
-                priority, category, next_action, summary, reasoning, mode)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                datetime.now(timezone.utc).isoformat(),
-                lead.name, lead.company, lead.email, lead.source, lead.message,
-                result.priority, result.category, result.next_action,
-                result.summary, result.reasoning, result.mode,
-            ),
-        )
-    conn.commit()
+        db.insert_lead(as_record(lead, classify_lead(lead)))
 
 
 # ─── App ─────────────────────────────────────────────────────────
@@ -175,8 +182,7 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    with db.connect() as conn:
-        rows = db.all_rows(conn, "SELECT * FROM leads ORDER BY id DESC LIMIT 100")
+    rows = db.list_leads()
 
     grouped = {"hot": [], "warm": [], "cold": []}
     for r in rows:
@@ -210,24 +216,7 @@ def lead_from_form(name: str, company: str, email: str, source: str, message: st
 def store_lead(lead: LeadInput):
     """Classify a lead and persist it. Shared by /leads, /webhook and /demo-lead."""
     result = classify_lead(lead)
-
-    with db.connect() as conn:
-        new_id = db.insert_returning_id(
-            conn,
-            """INSERT INTO leads
-               (received_at, name, company, email, source, message,
-                priority, category, next_action, summary, reasoning, mode)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                datetime.now(timezone.utc).isoformat(),
-                lead.name, lead.company, lead.email, lead.source, lead.message,
-                result.priority, result.category, result.next_action,
-                result.summary, result.reasoning, result.mode,
-            ),
-        )
-        conn.commit()
-
-    return new_id, result
+    return db.insert_lead(as_record(lead, result)), result
 
 
 @app.post("/leads", dependencies=[Depends(require_token)])
@@ -304,25 +293,19 @@ async def update_status(lead_id: int, request: Request):
     status = body.get("status", "new")
     if status not in {"new", "contacted", "won", "lost"}:
         raise HTTPException(status_code=400, detail="invalid status")
-    with db.connect() as conn:
-        db.execute(conn, "UPDATE leads SET status = ? WHERE id = ?", (status, lead_id))
-        conn.commit()
+    db.set_status(lead_id, status)
     return {"ok": True}
 
 
 @app.delete("/leads/{lead_id}", dependencies=[Depends(require_token)])
 def delete_lead(lead_id: int):
-    with db.connect() as conn:
-        db.execute(conn, "DELETE FROM leads WHERE id = ?", (lead_id,))
-        conn.commit()
+    db.delete_lead(lead_id)
     return {"ok": True}
 
 
 @app.get("/api/leads", dependencies=[Depends(require_token)])
 def list_leads():
-    with db.connect() as conn:
-        rows = db.all_rows(conn, "SELECT * FROM leads ORDER BY id DESC LIMIT 100")
-    return {"leads": rows}
+    return {"leads": db.list_leads()}
 
 
 @app.get("/health")

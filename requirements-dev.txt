@@ -3,3 +3,7 @@
 pytest>=8.0
 httpx>=0.27
 ruff>=0.6
+# The Lambda entry point and the DynamoDB backend are tested locally: moto
+# answers botocore in-process, so neither needs an AWS account.
+-r requirements-lambda.txt
+moto[dynamodb]>=5.0

@@ -1,0 +1,19 @@
+# Lambda image, separate from the Dockerfile that builds the long-running
+# container. They differ in how the process is started, which is not something
+# one image can do both ways: this one is invoked by the Lambda runtime and
+# exits between requests, the other one runs uvicorn and stays up.
+FROM public.ecr.aws/lambda/python:3.11
+
+# LAMBDA_TASK_ROOT is /var/task, where the runtime looks for the handler.
+COPY requirements.txt requirements-lambda.txt ${LAMBDA_TASK_ROOT}/
+
+# --no-cache-dir keeps the layer small, and image size is cold-start time here.
+RUN pip install --no-cache-dir \
+    -r ${LAMBDA_TASK_ROOT}/requirements.txt \
+    -r ${LAMBDA_TASK_ROOT}/requirements-lambda.txt
+
+COPY app.py db.py triage.py security.py lambda_handler.py ${LAMBDA_TASK_ROOT}/
+COPY templates/ ${LAMBDA_TASK_ROOT}/templates/
+
+# module.function, resolved from LAMBDA_TASK_ROOT.
+CMD ["lambda_handler.handler"]

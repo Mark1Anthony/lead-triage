@@ -1,0 +1,9 @@
+# Only needed for the Lambda deployment; the container and local runs do not
+# import either of these.
+
+# Translates between API Gateway payloads and ASGI.
+mangum>=0.19
+
+# DynamoDB client. The Lambda runtime ships a boto3, but pinning it here means
+# the image is not silently upgraded underneath the code.
+boto3>=1.34

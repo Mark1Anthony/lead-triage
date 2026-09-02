@@ -9,8 +9,9 @@ Without a key the app falls back to a **deterministic keyword classifier** — n
 calls, no cost, no surprises. That is the default, so running this without any
 configuration gives you keyword matching, not a model.
 
-Built with FastAPI. Storage is SQLite by default and Postgres when `DATABASE_URL`
-points at one — same code either way, the compose setup below uses Postgres.
+Built with FastAPI. Storage is SQLite by default, Postgres when `DATABASE_URL`
+points at one, and DynamoDB when it runs on AWS Lambda — same application code
+in all three cases.
 
 ![Schematic view of the dashboard](docs/screenshot.svg)
 
@@ -39,7 +40,8 @@ the write endpoints answer 401 — see [Authentication](#authentication).
 - **Webhook intake** — POST JSON to `/webhook` for external systems
 - **GPT classification** — priority, category, summary, next action, reasoning
 - **Kanban dashboard** — hot / warm / cold columns, colour-coded cards
-- **SQLite or Postgres** — SQLite by default, Postgres via `DATABASE_URL`
+- **Three storage backends** — SQLite by default, Postgres via `DATABASE_URL`,
+  DynamoDB via `DYNAMODB_TABLE`
 - **Dual mode** — `live` (OpenAI) or `demo` (mock). Falls back to demo on errors.
 - **Mark as won / lost / delete** — basic lifecycle
 - **5 example leads** — seeded on first run so the board isn't empty
@@ -49,7 +51,8 @@ the write endpoints answer 401 — see [Authentication](#authentication).
 - **Python 3.10+**
 - **FastAPI** + **Uvicorn**
 - **OpenAI SDK** (v1.x, `gpt-4o-mini` by default)
-- **SQLite** (stdlib) or **Postgres** (psycopg 3)
+- **SQLite** (stdlib), **Postgres** (psycopg 3) or **DynamoDB** (boto3)
+- **Mangum** on AWS Lambda, behind an HTTP API Gateway
 - **Jinja2** templates
 
 ## Quick start
@@ -220,15 +223,22 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-63 tests, no network and no database setup required — they run against SQLite in
+81 tests, no network and no cloud account required — they run against SQLite in
 a temporary directory and force demo mode, so nothing reaches the OpenAI API.
 
-To run the same tests against Postgres instead:
+To run the same tests against another backend:
 
 ```bash
 export TEST_DATABASE_URL=postgresql://leads:leads@localhost:5432/leads
 pytest
+
+export TEST_DYNAMODB=1     # moto answers botocore in-process
+pytest
 ```
+
+The DynamoDB run needs no AWS account and touches no network — the code under
+test is the code the deployed Lambda runs. `tests/test_lambda_handler.py` goes
+one step further and invokes the handler with an API Gateway payload.
 
 Every test then talks to Postgres, with the table dropped between tests so each
 one starts clean. CI does both on each push, plus a third job that builds the
@@ -251,7 +261,11 @@ lead-triage/
 ├── pytest.ini
 ├── render.yaml             # Render deployment (web service + Postgres)
 ├── app.py                  # FastAPI app + routes, logging setup
-├── db.py                   # SQLite/Postgres layer, schema, connections
+├── db.py                   # The three backends behind six functions
+├── lambda_handler.py       # Mangum entry point for AWS Lambda
+├── Dockerfile.lambda       # Lambda image, separate from the server image
+├── requirements-lambda.txt # mangum + boto3, only for the AWS deployment
+├── terraform/              # AWS: ECR, Lambda, API Gateway, DynamoDB, IAM
 ├── triage.py               # Classifier (live + demo)
 ├── security.py             # Token guard + IP rate limiter
 ├── templates/
@@ -259,11 +273,14 @@ lead-triage/
 ├── tests/
 │   ├── test_triage.py      # Classifier logic
 │   ├── test_db.py          # Dialect handling, no database needed
+│   ├── test_dynamodb.py    # Id counter, reserved words, scan filtering
+│   ├── test_lambda_handler.py  # Invoked with a real API Gateway payload
 │   ├── test_logging.py     # Startup lines actually reach the log
 │   └── test_api.py         # Endpoint access rules, runs on both backends
 ├── .github/workflows/
 │   └── ci.yml              # Tests on both backends + container smoke test
 └── docs/
+    ├── AWS-ARCHITEKTUR.md  # Architecture, trade-offs, costs, teardown
     └── screenshot.svg      # Drawn schematic, not a capture
 ```
 
@@ -271,10 +288,11 @@ lead-triage/
 
 Which database is used comes down to one variable:
 
-| `DATABASE_URL`              | Backend  | Where the data lives                    |
-|-----------------------------|----------|-----------------------------------------|
-| unset                       | SQLite   | `data/leads.db` next to the code         |
-| `postgresql://…`            | Postgres | on that server                           |
+| Environment                       | Backend  | Where the data lives            |
+|-----------------------------------|----------|---------------------------------|
+| nothing set                       | SQLite   | `data/leads.db` next to the code |
+| `DATABASE_URL=postgresql://…`     | Postgres | on that server                   |
+| `DYNAMODB_TABLE=…`                | DynamoDB | in that table                    |
 
 Nothing else changes — same routes, same tests, same code. `db.py` holds the
 two differences that actually exist between the dialects: the placeholder style
@@ -304,6 +322,18 @@ The live instance was deployed from a public Git URL rather than a connected
 GitHub account, which keeps Render out of the account's permissions but also
 means pushes do **not** redeploy it. Connect the repository in Render's
 dashboard if you want automatic deploys.
+
+**AWS** (`terraform/`) runs the same application as a Lambda container behind an
+HTTP API Gateway, with DynamoDB underneath — everything in the tier that stays
+free rather than the one that lasts twelve months, so an idle demo costs
+nothing instead of costing less. The pipeline authenticates by OIDC, so no
+access key exists to leak or expire.
+
+That stack has **not been applied**. The Terraform is validated, linted and
+security-scanned on every push, and the Lambda entry point and DynamoDB backend
+are tested locally against moto — but nothing here has run against a real AWS
+account. [`docs/AWS-ARCHITEKTUR.md`](docs/AWS-ARCHITEKTUR.md) has the
+architecture, the trade-offs, the costs and the two commands to tear it down.
 
 ## Why I built this
 

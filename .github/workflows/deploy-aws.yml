@@ -1,0 +1,93 @@
+name: Deploy to AWS
+
+# Builds the Lambda image, pushes it to ECR and points the function at it.
+#
+# The job is skipped, not failed, until AWS_ROLE_ARN is set as a repository
+# variable - that value comes out of `terraform output cicd_role_arn` and does
+# not exist before the stack has been applied once. A workflow that failed on
+# every push until then would be noise, not a signal.
+
+permissions:
+  contents: read
+  id-token: write # required for the OIDC token exchange; nothing else needs it
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app.py'
+      - 'db.py'
+      - 'triage.py'
+      - 'security.py'
+      - 'lambda_handler.py'
+      - 'templates/**'
+      - 'requirements*.txt'
+      - 'Dockerfile.lambda'
+      - '.github/workflows/deploy-aws.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    if: vars.AWS_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    environment: aws
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # No access key anywhere. The workflow's own token is exchanged for
+      # short-lived AWS credentials against a role that trusts this repository
+      # and this branch only.
+      - name: Authenticate to AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: eu-central-1
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          # Tagged with the commit, never with latest: the repository is set to
+          # IMMUTABLE, and a deployment should name the exact image it shipped.
+          image="$REGISTRY/lead-triage:${GITHUB_SHA}"
+          docker build -f Dockerfile.lambda -t "$image" .
+          docker push "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Point the function at it
+        run: |
+          aws lambda update-function-code \
+            --function-name lead-triage \
+            --image-uri "$IMAGE" \
+            --publish \
+            --no-cli-pager > /dev/null
+
+          # update-function-code returns before the new image is live.
+          aws lambda wait function-updated --function-name lead-triage
+
+      - name: It answers, on DynamoDB
+        run: |
+          url=$(aws apigatewayv2 get-apis \
+            --query "Items[?Name=='lead-triage'].ApiEndpoint | [0]" --output text)
+          echo "$url"
+
+          for i in $(seq 1 10); do
+            health=$(curl -fsS -m 15 "$url/health") && break
+            sleep 5
+          done
+          echo "$health"
+
+          echo "$health" | grep -q '"database":"dynamodb"' \
+            || { echo "expected dynamodb; the table variable did not reach the function"; exit 1; }
+
+      - name: Writes stay closed without a token
+        run: |
+          url=$(aws apigatewayv2 get-apis \
+            --query "Items[?Name=='lead-triage'].ApiEndpoint | [0]" --output text)
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$url/leads/1")
+          [ "$code" = "401" ] || { echo "expected 401, got $code"; exit 1; }

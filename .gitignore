@@ -13,3 +13,10 @@ data/
 
 # .env.example is checked in on purpose
 !.env.example
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfplan
+terraform/backend.hcl

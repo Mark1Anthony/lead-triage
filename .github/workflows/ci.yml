@@ -7,8 +7,12 @@ on:
     branches: [main]
 
 jobs:
-  # The same suite twice: once against the SQLite fallback, once against a real
-  # Postgres. Both paths ship, so both get tested.
+  # The same suite three times, once per backend. All three ship - SQLite for a
+  # local run, Postgres on Render and in compose, DynamoDB in Lambda - so all
+  # three are tested rather than the one that happens to be convenient.
+  #
+  # DynamoDB needs no AWS account: moto answers botocore in-process, so the
+  # code under test is the same code the deployed function runs.
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -17,6 +21,7 @@ jobs:
         include:
           - backend: sqlite
           - backend: postgres
+          - backend: dynamodb
 
     steps:
       - uses: actions/checkout@v4
@@ -46,10 +51,51 @@ jobs:
       - name: Run tests
         env:
           TEST_DATABASE_URL: ${{ matrix.backend == 'postgres' && 'postgresql://leads:leads@localhost:5432/leads' || '' }}
+          TEST_DYNAMODB: ${{ matrix.backend == 'dynamodb' && '1' || '' }}
         run: pytest -q
 
       - name: Import check
         run: python -c "import app, db, triage, security"
+
+  # The Terraform is never applied by CI - that needs credentials and creates
+  # billable resources. What CI can do is prove it is valid, formatted and free
+  # of the mistakes a scanner catches, which is the difference between code
+  # that has been reviewed and code that has only been written.
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: Formatting
+        run: terraform fmt -check -recursive terraform/
+
+      - name: Syntax and provider schemas
+        run: |
+          terraform -chdir=terraform init -backend=false -input=false
+          terraform -chdir=terraform validate
+
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: Lint
+        run: |
+          cd terraform
+          tflint --init
+          tflint --minimum-failure-severity=warning
+
+      - name: Security scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform
+          framework: terraform
+          quiet: true
+          output_format: cli
+          soft_fail: false
 
   # Build the image and prove the container actually serves traffic, rather
   # than only that the Dockerfile parses.
