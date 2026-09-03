@@ -128,6 +128,47 @@ Obergrenze — ein Budget verschickt Mail, es stoppt nichts. Es ist da, weil
 alles hier im dauerhaft freien Rahmen liegen soll und deshalb *jede* echte
 Ausgabe ein Signal ist, dass etwas nicht stimmt.
 
+### Was ein Angriff kosten kann
+
+Die Zahlen oben gelten für den Normalfall: kein Verkehr, keine Rechnung. Ein
+Bot, der die URL findet, ändert das, denn alles hier wird pro Anfrage
+abgerechnet. Ohne Gegenmaßnahme nimmt API Gateway standardmäßig Tausende
+Anfragen pro Sekunde an — das wären Größenordnungen von 25 bis 30 USD am Tag.
+
+Drei Grenzen, alle kostenlos, bewusst gestaffelt:
+
+| Grenze | Wert | Deckelt |
+|---|---|---|
+| Drosselung im API Gateway | 5 Anfragen/s, Burst 20 | die **Rate**, an der Tür |
+| Reservierte Nebenläufigkeit | 2 | die **Tiefe** |
+| Timeout | 10 s | die **Dauer** je Anfrage |
+
+Bei Dauerbeschuss auf voller gedrosselter Rate bleiben rund **1,80 USD am
+Tag**:
+
+| Posten | pro Tag |
+|---|---|
+| API-Gateway-Anfragen (432.000) | 0,43 USD |
+| Ausgehender Verkehr (~9 GB, Seite ist 21 KB) | 0,80 USD |
+| Lambda GB-Sekunden | 0,36 USD |
+| Lambda-Anfragen | 0,09 USD |
+| CloudWatch-Aufnahme | 0,11 USD |
+
+Der größte Posten ist der ausgehende Datenverkehr, nicht die Anfragen selbst —
+was leicht übersehen wird, weil die Free-Tier-Tabellen ihn nicht auflisten.
+
+Die Drosselung ist der einzige dieser Werte, der *vor* der Ausgabe wirkt. Ein
+Budget meldet sich, wenn das Geld weg ist. Ein echter Besucher merkt von 5/s
+nichts, weil der Burst einen Seitenaufruf abdeckt; ein Scanner bekommt 429er,
+und die zurückzugeben kostet nichts.
+
+**Eine harte Notbremse ist das nicht.** AWS kennt keine Ausgabenobergrenze. Wer
+eine will, braucht AWS Budget Actions, die bei Überschreitung automatisch
+Ressourcen abschalten und dafür selbst rund 0,10 USD am Tag kosten — oder einen
+CloudWatch-Alarm, der über SNS eine Lambda auslöst, welche die Nebenläufigkeit
+auf null setzt. Beides ist mehr Maschinerie, als dieses Projekt rechtfertigt,
+aber es ist der Unterschied zwischen gedeckelt und gestoppt.
+
 Die Zahlen bitte vor dem Aufbau selbst prüfen. AWS hat das Free-Tier-Modell im
 Juli 2025 umgestellt, und Preise altern schneller als Dokumentation.
 

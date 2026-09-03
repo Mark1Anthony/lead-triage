@@ -175,14 +175,16 @@ resource "aws_apigatewayv2_stage" "default" {
   # place to cap spend is the door, not the rooms behind it.
   #
   # Without this, API Gateway accepts thousands of requests per second by
-  # default. Ten per second is far more than a demo receives and turns the
-  # worst case from tens of dollars a day into cents. A burst of twenty absorbs
-  # a page load without letting anything sustain.
+  # default. Five is far more than a demo receives, and every cost in the stack
+  # scales with it: gateway requests, Lambda invocations, GB-seconds, log
+  # ingestion, and - the largest of them - outbound data transfer, because the
+  # dashboard is about 21 KB per request.
   #
-  # A real user notices nothing. A scanner gets 429s, which cost nothing to
-  # return.
+  # Sustained at this rate the worst case is roughly 1.80 USD a day. At ten it
+  # was 3.60. A burst of twenty still absorbs a page load, so a real visitor
+  # notices nothing; a scanner gets 429s, which cost nothing to return.
   default_route_settings {
-    throttling_rate_limit  = 10
+    throttling_rate_limit  = 5
     throttling_burst_limit = 20
   }
 
