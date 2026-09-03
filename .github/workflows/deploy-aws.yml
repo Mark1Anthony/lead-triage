@@ -30,7 +30,16 @@ jobs:
   deploy:
     if: vars.AWS_ROLE_ARN != ''
     runs-on: ubuntu-latest
-    environment: aws
+
+    # Deliberately no `environment:`. Naming one changes the subject GitHub puts
+    # in the OIDC token from repo:owner/name:ref:refs/heads/main to
+    # repo:owner/name:environment:<name>, and the role's trust policy binds to
+    # the branch. The result is an AssumeRoleWithWebIdentity refusal that says
+    # only "not authorized" - found by running it, not by reading it.
+    #
+    # An environment would buy approval gates. The trust policy would then have
+    # to name the environment instead of the branch, and the branch is the
+    # tighter statement for a repository with one deploy path.
 
     steps:
       - uses: actions/checkout@v4
