@@ -332,11 +332,17 @@ image: no registry, and therefore no storage bill, which was the only line that
 was not free. The pipeline authenticates by OIDC, so no access key exists to
 leak or expire.
 
-That stack has **not been applied**. The Terraform is validated, linted and
-security-scanned on every push, and the Lambda entry point and DynamoDB backend
-are tested locally against moto — but nothing here has run against a real AWS
-account. [`docs/AWS-ARCHITEKTUR.md`](docs/AWS-ARCHITEKTUR.md) has the
-architecture, the trade-offs, the costs and the two commands to tear it down.
+**https://642dvsi6k1.execute-api.eu-central-1.amazonaws.com** — applied on
+3 September 2026 and answering. `/health` reports `"database":"dynamodb"`; a
+cold start takes about three and a half seconds.
+
+Spend is capped in three layers, all free: the gateway throttles to 5 requests
+per second, the function times out at 10s, and two CloudWatch alarms mail
+within minutes if request or error counts spike — budgets alone would report a
+day late, because they watch money and money arrives late.
+[`docs/AWS-ARCHITEKTUR.md`](docs/AWS-ARCHITEKTUR.md) has the architecture, the
+trade-offs, what an attack would actually cost, and the one command to tear it
+all down.
 
 ## Why I built this
 

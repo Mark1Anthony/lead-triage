@@ -2,6 +2,9 @@
 
 Wie `lead-triage` auf AWS läuft, warum so und nicht anders, und was es kostet.
 
+**Live:** https://642dvsi6k1.execute-api.eu-central-1.amazonaws.com — aufgebaut
+am 03.09.2026 in `eu-central-1`, ein einziges `terraform apply`.
+
 ## Überblick
 
 ```mermaid
