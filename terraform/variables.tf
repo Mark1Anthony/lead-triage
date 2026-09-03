@@ -42,9 +42,15 @@ variable "memory_mb" {
 }
 
 variable "timeout_seconds" {
-  description = "Request timeout. API Gateway gives up at 30s regardless, so going higher only delays a client that has already left."
+  description = <<-EOT
+    Request timeout. Also a cost bound: billing is per GB-second, so the
+    longest an invocation can run is the most a single request can cost. Demo
+    mode classifies in under a millisecond and the slowest real path is a
+    DynamoDB scan, so ten seconds is generous. Live mode with an OpenAI call
+    would need more.
+  EOT
   type        = number
-  default     = 30
+  default     = 10
 }
 
 variable "log_retention_days" {

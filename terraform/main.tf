@@ -111,11 +111,15 @@ resource "aws_lambda_function" "this" {
   memory_size = var.memory_mb
   timeout     = var.timeout_seconds
 
-  # A ceiling on how many copies can run at once. It costs nothing, and it is
-  # the only hard limit on spend that exists here: a budget alert arrives after
-  # the money is gone, this stops the money being spent. Ten is far above any
-  # demand this will see and far below anything that could add up.
-  reserved_concurrent_executions = 10
+  # A ceiling on how many copies can run at once. Two is enough for a demo that
+  # nobody is load-testing, and it bounds what a burst can cost even if it gets
+  # past the gateway throttle. The two limits are deliberately layered: the
+  # throttle caps the rate, this caps the depth.
+  #
+  # It also has a side effect worth knowing: reserved concurrency is taken out
+  # of the account pool, so this function cannot be starved by another one and
+  # cannot starve another one either.
+  reserved_concurrent_executions = 2
 
   tracing_config {
     # Free below 100,000 traces a month, which this will not approach, and it
@@ -164,6 +168,23 @@ resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.this.id
   name        = "$default"
   auto_deploy = true
+
+  # The cost ceiling for the whole stack, and the only one that acts before the
+  # money is spent rather than after. Everything downstream - Lambda
+  # invocations, GB-seconds, log ingestion - is billed per request, so the
+  # place to cap spend is the door, not the rooms behind it.
+  #
+  # Without this, API Gateway accepts thousands of requests per second by
+  # default. Ten per second is far more than a demo receives and turns the
+  # worst case from tens of dollars a day into cents. A burst of twenty absorbs
+  # a page load without letting anything sustain.
+  #
+  # A real user notices nothing. A scanner gets 429s, which cost nothing to
+  # return.
+  default_route_settings {
+    throttling_rate_limit  = 10
+    throttling_burst_limit = 20
+  }
 
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.api.arn
