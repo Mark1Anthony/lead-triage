@@ -22,7 +22,7 @@ on:
       - 'lambda_handler.py'
       - 'templates/**'
       - 'requirements*.txt'
-      - 'Dockerfile.lambda'
+      - 'scripts/build-lambda.sh'
       - '.github/workflows/deploy-aws.yml'
   workflow_dispatch:
 
@@ -44,30 +44,25 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: eu-central-1
 
-      - name: Log in to ECR
-        id: ecr
-        uses: aws-actions/amazon-ecr-login@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-      - name: Build and push
-        env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
+      - name: Build the deployment package
         run: |
-          # Tagged with the commit, never with latest: the repository is set to
-          # IMMUTABLE, and a deployment should name the exact image it shipped.
-          image="$REGISTRY/lead-triage:${GITHUB_SHA}"
-          docker build -f Dockerfile.lambda -t "$image" .
-          docker push "$image"
-          echo "IMAGE=$image" >> "$GITHUB_ENV"
+          scripts/build-lambda.sh
+          cd build && zip -qr ../lambda.zip . && cd ..
+          ls -lh lambda.zip
 
-      - name: Point the function at it
+      - name: Ship it
         run: |
           aws lambda update-function-code \
             --function-name lead-triage \
-            --image-uri "$IMAGE" \
+            --zip-file fileb://lambda.zip \
             --publish \
             --no-cli-pager > /dev/null
 
-          # update-function-code returns before the new image is live.
+          # update-function-code returns before the new package is live.
           aws lambda wait function-updated --function-name lead-triage
 
       - name: It answers, on DynamoDB

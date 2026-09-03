@@ -20,3 +20,5 @@ terraform/*.tfstate
 terraform/*.tfstate.*
 terraform/*.tfplan
 terraform/backend.hcl
+build/
+terraform/lambda.zip

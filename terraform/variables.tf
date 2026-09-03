@@ -10,14 +10,19 @@ variable "region" {
   default     = "eu-central-1"
 }
 
-variable "image_tag" {
+variable "runtime" {
   description = <<-EOT
-    Tag of the image in ECR the function runs. The pipeline sets this to the
-    commit it just built, so a deployment names one specific image rather than
-    whatever `latest` points at by the time Lambda pulls it.
+    Lambda runtime. Must match PYTHON_VERSION in scripts/build-lambda.sh: the
+    package contains compiled extensions built for one ABI, and a mismatch
+    fails at the first invocation with an import error that does not say why.
   EOT
   type        = string
-  default     = "latest"
+  default     = "python3.11"
+
+  validation {
+    condition     = can(regex("^python3\.(11|12|13)$", var.runtime))
+    error_message = "Use a Python runtime AWS still supports."
+  }
 }
 
 variable "memory_mb" {

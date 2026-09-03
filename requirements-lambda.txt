@@ -1,9 +1,23 @@
-# Only needed for the Lambda deployment; the container and local runs do not
-# import either of these.
+# What goes into the Lambda deployment package, and nothing else.
+#
+# Not requirements.txt: that one has uvicorn, which Lambda never starts, and
+# psycopg, which this deployment does not use - it runs on DynamoDB. Every
+# megabyte in the package is cold-start time, so the list is a subset plus the
+# one thing only Lambda needs.
+#
+# boto3 is deliberately absent. The Lambda runtime ships it, and packaging a
+# second copy would add about 15 MB to load on every cold start. It is in
+# requirements-dev.txt so tests and local runs have it.
 
 # Translates between API Gateway payloads and ASGI.
 mangum>=0.19
 
-# DynamoDB client. The Lambda runtime ships a boto3, but pinning it here means
-# the image is not silently upgraded underneath the code.
-boto3>=1.34
+# The application's own runtime, matching requirements.txt.
+fastapi>=0.110
+jinja2>=3.1
+python-multipart>=0.0.9
+pydantic>=2.6
+
+# Absent on purpose: openai. triage.py imports it lazily, inside the function
+# that needs it, so demo mode runs without it. Live mode on Lambda would mean
+# adding it here - about 10 MB - and putting a real key in SSM.

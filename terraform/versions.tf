@@ -6,6 +6,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.70"
     }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.6"
+    }
   }
 
   # State stays local. This stack has one operator and one environment, and a

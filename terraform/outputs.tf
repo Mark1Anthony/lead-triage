@@ -3,11 +3,6 @@ output "url" {
   value       = aws_apigatewayv2_api.this.api_endpoint
 }
 
-output "ecr_repository_url" {
-  description = "Registry to tag and push images to."
-  value       = aws_ecr_repository.this.repository_url
-}
-
 output "function_name" {
   description = "Lambda function name, for the pipeline's update call and for `aws logs tail`."
   value       = aws_lambda_function.this.function_name

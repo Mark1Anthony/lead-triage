@@ -3,52 +3,26 @@ data "aws_caller_identity" "current" {}
 locals {
   name = var.project
 
-  # The image the function runs. It has to exist in ECR before the function can
-  # be created - see the bootstrap note in docs/AWS-ARCHITEKTUR.md.
-  image_uri = "${aws_ecr_repository.this.repository_url}:${var.image_tag}"
+  # Where scripts/build-lambda.sh puts the deployment package.
+  build_dir = "${path.module}/../build"
 }
 
-# ─── Registry ─────────────────────────────────────────────────────
+# ─── Package ──────────────────────────────────────────────────────
+#
+# A zip rather than a container image, and that is a deliberate reversal. The
+# image approach needed ECR, which is the only line on this bill that is not
+# permanently free, a Docker daemon to build it, and a three-step bootstrap -
+# a function built from an image cannot be created before the image exists.
+#
+# The zip removes all three. Terraform creates everything in one apply, the
+# package is ~7 MB instead of ~400 MB so the cold start is shorter, and
+# scripts/build-lambda.sh produces it on any operating system because pip is
+# told which platform and Python version to fetch wheels for.
 
-resource "aws_ecr_repository" "this" {
-  name                 = local.name
-  image_tag_mutability = "IMMUTABLE" # a deployed tag cannot be repointed later
-
-  image_scanning_configuration {
-    scan_on_push = true # basic scanning is free
-  }
-
-  encryption_configuration {
-    # AES256 uses an AWS-owned key and costs nothing. A customer-managed key
-    # would be about a dollar a month for a registry holding one image, and
-    # would protect against nothing that matters here.
-    encryption_type = "AES256"
-  }
-
-  #checkov:skip=CKV_AWS_136:KMS here means a customer-managed key, which costs more than the registry it protects.
-}
-
-resource "aws_ecr_lifecycle_policy" "this" {
-  repository = aws_ecr_repository.this.name
-
-  # Storage is the only part of ECR that is not free after the first year, and
-  # every deployment adds an image.
-  policy = jsonencode({
-    rules = [{
-      rulePriority = 1
-      description  = "Keep the last 3 images"
-      selection = {
-        tagStatus = "any"
-        countType = "imageCountMoreThan"
-        # ECR storage is the one line here that is not free: the 500 MB
-        # allowance runs out after twelve months, and this image is around
-        # 400 MB. Three is enough to roll back twice and costs about a tenth of
-        # what ten would.
-        countNumber = 3
-      }
-      action = { type = "expire" }
-    }]
-  })
+data "archive_file" "lambda" {
+  type        = "zip"
+  source_dir  = local.build_dir
+  output_path = "${path.module}/lambda.zip"
 }
 
 # ─── Storage ──────────────────────────────────────────────────────
@@ -125,8 +99,14 @@ resource "aws_lambda_function" "this" {
   function_name = local.name
   role          = aws_iam_role.lambda.arn
 
-  package_type = "Image"
-  image_uri    = local.image_uri
+  filename = data.archive_file.lambda.output_path
+  handler  = "lambda_handler.handler"
+  runtime  = var.runtime
+
+  # Changes the function when the package changes and only then. Without it
+  # Terraform compares the local file to nothing and never redeploys, so an
+  # apply after a code change would report no changes at all.
+  source_code_hash = data.archive_file.lambda.output_base64sha256
 
   memory_size = var.memory_mb
   timeout     = var.timeout_seconds

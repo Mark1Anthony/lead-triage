@@ -263,9 +263,10 @@ lead-triage/
 ├── app.py                  # FastAPI app + routes, logging setup
 ├── db.py                   # The three backends behind six functions
 ├── lambda_handler.py       # Mangum entry point for AWS Lambda
-├── Dockerfile.lambda       # Lambda image, separate from the server image
-├── requirements-lambda.txt # mangum + boto3, only for the AWS deployment
-├── terraform/              # AWS: ECR, Lambda, API Gateway, DynamoDB, IAM
+├── requirements-lambda.txt # What goes into the deployment package
+├── Dockerfile.lambda       # The container alternative, kept but not deployed
+├── scripts/build-lambda.sh # Builds the zip, on any operating system
+├── terraform/              # AWS: Lambda, API Gateway, DynamoDB, IAM, budget
 ├── triage.py               # Classifier (live + demo)
 ├── security.py             # Token guard + IP rate limiter
 ├── templates/
@@ -323,11 +324,13 @@ GitHub account, which keeps Render out of the account's permissions but also
 means pushes do **not** redeploy it. Connect the repository in Render's
 dashboard if you want automatic deploys.
 
-**AWS** (`terraform/`) runs the same application as a Lambda container behind an
-HTTP API Gateway, with DynamoDB underneath — everything in the tier that stays
-free rather than the one that lasts twelve months, so an idle demo costs
-nothing instead of costing less. The pipeline authenticates by OIDC, so no
-access key exists to leak or expire.
+**AWS** (`terraform/`) runs the same application as a Lambda behind an HTTP API
+Gateway, with DynamoDB underneath — everything in the tier that stays free
+rather than the one that lasts twelve months, so an idle demo costs nothing
+rather than costing less. The function ships as a zip rather than a container
+image: no registry, and therefore no storage bill, which was the only line that
+was not free. The pipeline authenticates by OIDC, so no access key exists to
+leak or expire.
 
 That stack has **not been applied**. The Terraform is validated, linted and
 security-scanned on every push, and the Lambda entry point and DynamoDB backend

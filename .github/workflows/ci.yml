@@ -97,6 +97,66 @@ jobs:
           output_format: cli
           soft_fail: false
 
+  # Proves the deployment package works on the runtime it targets. The build
+  # runs on any operating system, so the failure it has to catch is a package
+  # that builds fine and then cannot be imported - a wheel for the wrong Python
+  # or the wrong platform. On a Linux runner with the matching interpreter,
+  # importing the handler settles that before AWS ever sees it.
+  lambda-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Must match PYTHON_VERSION in the build script and the runtime in
+          # terraform/variables.tf.
+          python-version: '3.11'
+
+      - name: Build
+        run: scripts/build-lambda.sh
+
+      - name: The handler imports
+        run: |
+          cd build
+          python -c "import lambda_handler; print(type(lambda_handler.handler).__name__)"
+
+      - name: It answers a request
+        run: |
+          cd build
+          python - <<'PY'
+          import json
+          import lambda_handler
+
+          event = {
+              "version": "2.0",
+              "rawPath": "/health",
+              "rawQueryString": "",
+              "headers": {"host": "example.com"},
+              "requestContext": {
+                  "http": {"method": "GET", "path": "/health",
+                           "protocol": "HTTP/1.1", "sourceIp": "203.0.113.1"},
+                  "stage": "$default",
+              },
+              "body": None,
+              "isBase64Encoded": False,
+          }
+          response = lambda_handler.handler(event, None)
+          print(response["statusCode"], response["body"])
+          assert response["statusCode"] == 200, response
+          # No DYNAMODB_TABLE here, so it falls back to SQLite - which is the
+          # point: the package runs, the backend is a deployment decision.
+          assert json.loads(response["body"])["status"] == "ok"
+          PY
+
+      - name: Size, because it is cold-start time
+        run: |
+          cd build && zip -qr ../lambda.zip . && cd ..
+          size=$(stat -c %s lambda.zip)
+          echo "$((size / 1024 / 1024)) MB zipped, $(du -sh build | cut -f1) unpacked"
+          # 50 MB is the direct-upload limit; well before that it is just slow.
+          [ "$size" -lt 26214400 ] || { echo "package over 25 MB"; exit 1; }
+
   # Build the image and prove the container actually serves traffic, rather
   # than only that the Dockerfile parses.
   docker:

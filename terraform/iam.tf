@@ -137,23 +137,6 @@ resource "aws_iam_policy" "cicd" {
     Statement = [
       {
         Effect = "Allow"
-        # Account-wide by definition: the token is not tied to a repository.
-        Action   = "ecr:GetAuthorizationToken"
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:CompleteLayerUpload",
-          "ecr:InitiateLayerUpload",
-          "ecr:PutImage",
-          "ecr:UploadLayerPart",
-        ]
-        Resource = aws_ecr_repository.this.arn
-      },
-      {
-        Effect = "Allow"
         # Update the code, and nothing else about the function. Changing its
         # role, its environment or its permissions stays with Terraform.
         Action   = "lambda:UpdateFunctionCode"

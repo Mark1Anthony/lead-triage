@@ -7,15 +7,15 @@ Wie `lead-triage` auf AWS läuft, warum so und nicht anders, und was es kostet.
 ```mermaid
 flowchart LR
     user([Besucher]) -->|HTTPS| agw["API Gateway<br/>HTTP API"]
-    agw -->|"Payload 2.0"| fn["Lambda<br/>Container-Image, 512 MB"]
+    agw -->|"Payload 2.0"| fn["Lambda<br/>ZIP-Paket, 512 MB"]
     fn --> ddb[("DynamoDB<br/>Tabelle leads")]
     fn -->|"nur lesen"| ssm["SSM Parameter Store<br/>SecureString"]
     fn --> logs["CloudWatch Logs<br/>14 Tage"]
 
     subgraph deploy["Bei jedem Push auf main"]
         gha["GitHub Actions"] -->|"OIDC, kein Schlüssel"| role["IAM-Rolle"]
-        gha --> ecr["ECR<br/>Image, per Commit getaggt"]
-        ecr -.->|"update-function-code"| fn
+        gha --> pkg["ZIP bauen<br/>~7 MB"]
+        pkg -.->|"update-function-code"| fn
     end
 ```
 
@@ -35,8 +35,8 @@ Monate lang. Nach Ablauf jedes Startguthabens läuft dieses Deployment weiter
 und kostet weiter nichts.
 
 **Der Preis dafür ist der Kaltstart.** Nach Leerlauf dauert die erste Anfrage
-rund eine Sekunde, weil das Container-Image geladen und der Python-Prozess
-gestartet werden muss. Für eine Demo ist das der richtige Tausch. Für ein
+einen Moment, weil das Paket geladen und der Python-Prozess gestartet werden
+muss. Für eine Demo ist das der richtige Tausch. Für ein
 Produkt mit echten Nutzern wäre es der falsche, und die Antwort darauf wäre
 Provisioned Concurrency — die wieder rund um die Uhr kostet.
 
@@ -110,22 +110,18 @@ Spalte.
 | SSM Parameter Store | Standardparameter | einer | 0 |
 | X-Ray | 100.000 Traces pro Monat | weit darunter | 0 |
 | API Gateway HTTP API | nur erste 12 Monate | ~1 USD je Mio. Anfragen | Bruchteile eines Cents |
-| ECR | nur erste 12 Monate (500 MB) | ~400 MB je Image, drei behalten | ~0,12 USD |
 
-**Erwartete Rechnung: rund 0,12 USD im Monat**, praktisch vollständig
-ECR-Speicher. Zwei Entscheidungen halten das dort:
+**Erwartete Rechnung: null.** Zwei Entscheidungen halten sie dort:
 
 DynamoDB läuft **provisioniert**, nicht on-demand. Die dauerhaft freie Stufe
 gilt ausschließlich für provisionierte Kapazität; on-demand hat gar keine und
 rechnet ab der ersten Anfrage ab. Fünf Einheiten je Richtung liegen weit über
 dem Bedarf und weit unter der Freigrenze.
 
-Die Lifecycle-Regel behält **drei** Images statt zehn. Das ist genug, um zweimal
-zurückzurollen, und kostet ein Drittel.
-
-Wer exakt null will, packt die Funktion als ZIP statt als Container-Image —
-dann entfällt ECR ganz. Der Preis dafür ist, dass das vorhandene Dockerfile
-nicht mehr die Grundlage ist und das Paket auf Linux gebaut werden muss.
+Die Funktion wird als **ZIP** ausgeliefert, nicht als Container-Image. Ein
+Image bräuchte ECR, und ECR-Speicher ist der einzige Posten in dieser
+Architektur, der nach dem ersten Jahr etwas kostet — bei drei Images rund
+0,12 USD im Monat. Ein ZIP-Paket lagert Lambda selbst, ohne Gebühr.
 
 Ein Budget mit Alarm bei 5 USD liegt trotzdem im Stack. AWS erzwingt keine
 Obergrenze — ein Budget verschickt Mail, es stoppt nichts. Es ist da, weil
@@ -161,29 +157,53 @@ Juli 2025 umgestellt, und Preise altern schneller als Dokumentation.
    Anfrage bereits bezahlt hat.
 5. **Alarme auf Fehlerrate und Dauer**, nicht nur ein Kostenbudget.
 
-## Aufbau
+## Paketierung
 
-Terraform kann die Funktion nicht anlegen, bevor das Image existiert — ein
-Container-Image-Lambda verlangt ein vorhandenes Image in ECR. Deshalb in drei
-Schritten:
+`scripts/build-lambda.sh` erzeugt `build/`, Terraform packt daraus das ZIP.
+
+Der interessante Teil sind drei pip-Schalter:
 
 ```bash
+pip install --platform manylinux2014_x86_64             --python-version 3.11             --only-binary=:all:             --target build
+```
+
+Ohne `--platform` und `--python-version` holt pip Wheels für den Interpreter,
+der gerade läuft. Auf einem Windows-Rechner landet dann eine `.pyd` im Paket,
+auf einem Rechner mit Python 3.14 eine `cpython-314.so` — und die Funktion
+scheitert beim ersten Aufruf an einem Importfehler, der nicht sagt, warum.
+Genau das ist beim ersten Versuch passiert und wurde erst durch einen Blick in
+die Dateinamen sichtbar.
+
+`--only-binary=:all:` ist keine Optimierung, sondern die Absicherung dagegen:
+Es verbietet pip, auf einen Quellcode-Build auszuweichen, denn der würde gegen
+das lokale Python und die lokale Plattform kompilieren — dieselbe Falle, nur
+lautlos.
+
+Das Bauskript prüft am Ende selbst, dass keine `.pyd` und keine fremde
+ABI-Version im Paket liegt, und bricht sonst ab. Die CI baut zusätzlich auf
+einem Linux-Runner mit Python 3.11, importiert den Handler und ruft ihn mit
+einem API-Gateway-Event auf. Ein Paket, das sich nicht importieren lässt,
+kommt damit gar nicht erst bis AWS.
+
+`Dockerfile.lambda` liegt weiterhin im Repository. Es ist die Container-
+Variante derselben Funktion und wird nicht ausgeliefert — behalten als Beleg,
+dass beide Wege gebaut wurden, und weil die Begründung, warum es das ZIP
+geworden ist, ohne die Alternative in der Luft hinge.
+
+## Aufbau
+
+Ein einziges `apply`. Das war beim Container-Image anders: eine Funktion aus
+einem Image kann nicht angelegt werden, bevor das Image existiert, also
+brauchte es dort erst die Registry, dann einen Push, dann den Rest. Mit einem
+ZIP entfällt das.
+
+```bash
+scripts/build-lambda.sh
+
 cd terraform
 terraform init
-
-# 1. Nur die Registry.
-terraform apply -target=aws_ecr_repository.this
-
-# 2. Image bauen und hochladen.
-repo=$(terraform output -raw ecr_repository_url)
-aws ecr get-login-password --region eu-central-1 \
-  | docker login --username AWS --password-stdin "${repo%%/*}"
-
-docker build -f ../Dockerfile.lambda -t "$repo:bootstrap" ..
-docker push "$repo:bootstrap"
-
-# 3. Der Rest.
-terraform apply -var 'image_tag=bootstrap'
+terraform plan -out=tf.plan          # vor dem Anwenden lesen
+terraform apply tf.plan
 ```
 
 Danach steht die URL in `terraform output url`.
@@ -205,6 +225,7 @@ terraform import aws_iam_openid_connect_provider.github <arn>
 terraform destroy
 ```
 
-ECR verweigert das Löschen eines Repositories, das noch Images enthält.
-Entweder vorher leeren oder `force_delete = true` setzen — hier bewusst nicht
-gesetzt, damit ein `destroy` nicht versehentlich alle Images mitnimmt.
+Nimmt alles mit, ohne Ausnahme. Es gibt keine Registry, die sich wegen
+verbliebener Images querstellt, und keinen Speicher, der nach dem Abbau
+weiterläuft — das war ein Nebeneffekt der ZIP-Entscheidung, kein Ziel, aber
+ein angenehmer.
