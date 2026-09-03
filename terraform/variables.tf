@@ -20,7 +20,7 @@ variable "runtime" {
   default     = "python3.11"
 
   validation {
-    condition     = can(regex("^python3\.(11|12|13)$", var.runtime))
+    condition     = can(regex("^python3[.](11|12|13)$", var.runtime))
     error_message = "Use a Python runtime AWS still supports."
   }
 }
