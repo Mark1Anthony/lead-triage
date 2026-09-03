@@ -111,15 +111,16 @@ resource "aws_lambda_function" "this" {
   memory_size = var.memory_mb
   timeout     = var.timeout_seconds
 
-  # A ceiling on how many copies can run at once. Two is enough for a demo that
-  # nobody is load-testing, and it bounds what a burst can cost even if it gets
-  # past the gateway throttle. The two limits are deliberately layered: the
-  # throttle caps the rate, this caps the depth.
+  # -1 means no per-function reservation, and on a new account that is not a
+  # choice. AWS requires at least 10 unreserved concurrent executions to remain
+  # in the account, and a new account's total quota is 10 - so reserving even
+  # one fails with InvalidParameterValueException. Found the hard way, mid-apply.
   #
-  # It also has a side effect worth knowing: reserved concurrency is taken out
-  # of the account pool, so this function cannot be starved by another one and
-  # cannot starve another one either.
-  reserved_concurrent_executions = 2
+  # The ceiling still exists, one level up: the account cannot run more than 10
+  # concurrent executions at all, which is tighter than the 2 this asked for
+  # would have been meaningful against. Once the quota is raised - which is a
+  # support request, not a setting - this becomes worth setting again.
+  reserved_concurrent_executions = var.reserved_concurrency
 
   tracing_config {
     # Free below 100,000 traces a month, which this will not approach, and it

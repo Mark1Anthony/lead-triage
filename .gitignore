@@ -19,6 +19,12 @@ terraform/.terraform/
 terraform/*.tfstate
 terraform/*.tfstate.*
 terraform/*.tfplan
+terraform/*.plan
 terraform/backend.hcl
 build/
 terraform/lambda.zip
+
+# Variable values are local: they hold an email address, and this repository is
+# public. terraform.tfvars.example carries the shape without the values.
+terraform/*.tfvars
+!terraform/*.tfvars.example

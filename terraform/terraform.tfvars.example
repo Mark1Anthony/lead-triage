@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars and fill in. That file is gitignored.
+#
+# Terraform reads terraform.tfvars automatically, so the values below do not
+# have to be passed on the command line - which also means an apply cannot
+# silently drop the alarms by forgetting a -var flag.
+
+# Where the CloudWatch alarms mail. Empty or absent disables them.
+# AWS sends a confirmation link once; the subscription delivers nothing until
+# it is clicked.
+alert_email = ""
+
+# Where the Terraform-managed budget mails. Empty disables the budget.
+budget_alert_email = ""
