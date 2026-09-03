@@ -137,9 +137,18 @@ resource "aws_iam_policy" "cicd" {
     Statement = [
       {
         Effect = "Allow"
-        # Update the code, and nothing else about the function. Changing its
-        # role, its environment or its permissions stays with Terraform.
-        Action   = "lambda:UpdateFunctionCode"
+        # Update the code, and read back enough to know when the update has
+        # landed - `aws lambda wait function-updated` polls
+        # GetFunctionConfiguration, and without it the deploy uploads
+        # successfully and then fails on the wait.
+        #
+        # Everything else about the function stays with Terraform: its role,
+        # its environment, its permissions. The pipeline ships code, it does
+        # not reconfigure infrastructure.
+        Action = [
+          "lambda:UpdateFunctionCode",
+          "lambda:GetFunctionConfiguration",
+        ]
         Resource = aws_lambda_function.this.arn
       },
     ]
