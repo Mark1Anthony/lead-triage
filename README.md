@@ -19,17 +19,20 @@ in all three cases.
 
 ## Live demo
 
-**https://lead-triage-31jo.onrender.com**
+**https://642dvsi6k1.execute-api.eu-central-1.amazonaws.com** — AWS Lambda
+behind an HTTP API Gateway, with DynamoDB underneath. This is the one to use.
 
-Runs in demo mode on Render's free plan, backed by a Postgres instance — the
-dashboard shows five seeded leads, and the form at the bottom of the page
-creates real ones. Classification there is the keyword algorithm, not a model,
-so nothing costs anything and the result is the same on every run.
+The dashboard shows five seeded leads and the form at the bottom creates real
+ones. Classification is the keyword algorithm rather than a model, so nothing
+costs anything and the result is the same on every run. A cold start takes
+about three and a half seconds; after that it is immediate.
 
-Two things to expect from the free plan: the service sleeps after a while, so
-the first request can take up to a minute to wake it, and the free database
-expires 30 days after it is created — this one on 29 September 2026. When it
-goes, the demo goes with it until a new one is provisioned.
+There is a second deployment on Render at
+[lead-triage-31jo.onrender.com](https://lead-triage-31jo.onrender.com), running
+the same application on Postgres. **Its free database is deleted on 29 September
+2026**, and the service will stop starting when that happens — the AWS
+deployment is not affected. It is kept for now because running the same code on
+two very different platforms is the point of `db.py`.
 
 Anything that writes beyond that public form is closed. Without `X-Api-Token`
 the write endpoints answer 401 — see [Authentication](#authentication).
