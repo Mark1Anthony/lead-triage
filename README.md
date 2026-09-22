@@ -27,12 +27,10 @@ ones. Classification is the keyword algorithm rather than a model, so nothing
 costs anything and the result is the same on every run. A cold start takes
 about three and a half seconds; after that it is immediate.
 
-There is a second deployment on Render at
-[lead-triage-31jo.onrender.com](https://lead-triage-31jo.onrender.com), running
-the same application on Postgres. **Its free database is deleted on 29 September
-2026**, and the service will stop starting when that happens — the AWS
-deployment is not affected. It is kept for now because running the same code on
-two very different platforms is the point of `db.py`.
+The same application also runs on Postgres and on SQLite. That is not a claim
+to take on trust: every push runs the test suite three times, once against each
+backend, including a real Postgres container — see
+[Deployment & persistence](#deployment--persistence).
 
 Anything that writes beyond that public form is closed. Without `X-Api-Token`
 the write endpoints answer 401 — see [Authentication](#authentication).
@@ -322,10 +320,9 @@ Two limits of the free plan, worth knowing before relying on it:
 - the free database expires 30 days after creation and is then deleted, unless
   it is moved to a paid plan
 
-The live instance was deployed from a public Git URL rather than a connected
-GitHub account, which keeps Render out of the account's permissions but also
-means pushes do **not** redeploy it. Connect the repository in Render's
-dashboard if you want automatic deploys.
+A deployment ran there until its free database expired after 30 days, which is
+the limit above rather than a fault in the setup. The Blueprint still applies
+unchanged for anyone who wants to run it themselves.
 
 **AWS** (`terraform/`) runs the same application as a Lambda behind an HTTP API
 Gateway, with DynamoDB underneath — everything in the tier that stays free
